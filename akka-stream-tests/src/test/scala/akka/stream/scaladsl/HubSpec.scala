@@ -1,12 +1,14 @@
-/**
- * Copyright (C) 2015-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2015-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.stream.scaladsl
 
 import akka.stream.{ ActorMaterializer, KillSwitches, ThrottleMode }
 import akka.stream.testkit.{ StreamSpec, TestPublisher, TestSubscriber }
-import akka.stream.testkit.Utils.{ TE, assertAllStagesStopped }
+import akka.stream.testkit.Utils.TE
 import akka.stream.testkit.scaladsl.{ TestSink, TestSource }
+import akka.stream.testkit.scaladsl.StreamTestKit._
 import akka.testkit.EventFilter
 
 import scala.collection.immutable

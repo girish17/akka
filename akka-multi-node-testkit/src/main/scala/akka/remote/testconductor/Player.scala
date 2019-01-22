@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.remote.testconductor
 
 import java.util.concurrent.TimeoutException
@@ -18,6 +19,7 @@ import akka.event.{ LoggingAdapter, Logging }
 import java.net.{ InetSocketAddress, ConnectException }
 import akka.remote.transport.ThrottlerTransportAdapter.{ SetThrottle, TokenBucket, Blackhole, Unthrottled }
 import akka.dispatch.{ UnboundedMessageQueueSemantics, RequiresMessageQueue }
+import akka.util.ccompat._
 
 object Player {
 
@@ -72,8 +74,6 @@ trait Player { this: TestConductorExt ⇒
    * set in [[akka.remote.testconductor.Conductor]]`.startController()`.
    */
   def startClient(name: RoleName, controllerAddr: InetSocketAddress): Future[Done] = {
-    import ClientFSM._
-    import akka.actor.FSM._
     import Settings.BarrierTimeout
 
     if (_client ne null) throw new IllegalStateException("TestConductorClient already started")
@@ -86,20 +86,20 @@ trait Player { this: TestConductorExt ⇒
    * Enter the named barriers, one after the other, in the order given. Will
    * throw an exception in case of timeouts or other errors.
    */
-  def enter(name: String*): Unit = enter(Settings.BarrierTimeout, name.to[immutable.Seq])
+  def enter(name: String*): Unit = enter(Settings.BarrierTimeout, name.to(immutable.Seq))
 
   /**
    * Enter the named barriers, one after the other, in the order given. Will
    * throw an exception in case of timeouts or other errors.
    */
-  def enter(timeout: Timeout, name: immutable.Seq[String]) {
+  def enter(timeout: Timeout, name: immutable.Seq[String]): Unit = {
     system.log.debug("entering barriers " + name.mkString("(", ", ", ")"))
     val stop = Deadline.now + timeout.duration
     name foreach { b ⇒
       val barrierTimeout = stop.timeLeft
       if (barrierTimeout < Duration.Zero) {
         client ! ToServer(FailBarrier(b))
-        throw new TimeoutException("Server timed out while waiting for barrier " + b);
+        throw new TimeoutException("Server timed out while waiting for barrier " + b)
       }
       try {
         implicit val timeout = Timeout(barrierTimeout + Settings.QueryTimeout.duration)

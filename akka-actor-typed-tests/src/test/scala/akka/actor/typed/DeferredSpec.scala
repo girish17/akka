@@ -1,14 +1,17 @@
-/**
- * Copyright (C) 2017-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2017-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.actor.typed
 
+import akka.testkit.EventFilter
 import akka.actor.typed.scaladsl.Behaviors
-import akka.actor.typed.scaladsl.Behaviors.BehaviorDecorators
-import akka.testkit.typed.TestKitSettings
-import akka.testkit.typed.scaladsl._
+import akka.actor.testkit.typed.TestKitSettings
+import akka.actor.testkit.typed.scaladsl._
 
 import scala.util.control.NoStackTrace
+import akka.actor.ActorInitializationException
+import org.scalatest.{ Matchers, WordSpec, WordSpecLike }
 
 object DeferredSpec {
   sealed trait Command
@@ -19,17 +22,24 @@ object DeferredSpec {
   case object Started extends Event
 
   def target(monitor: ActorRef[Event]): Behavior[Command] =
-    Behaviors.immutable((_, cmd) ⇒ cmd match {
+    Behaviors.receive((_, cmd) ⇒ cmd match {
       case Ping ⇒
         monitor ! Pong
         Behaviors.same
     })
 }
 
-class DeferredSpec extends ActorTestKit with TypedAkkaSpecWithShutdown {
+class DeferredSpec extends ScalaTestWithActorTestKit(
+  """
+    akka.loggers = [akka.testkit.TestEventListener]
+    """) with WordSpecLike {
 
   import DeferredSpec._
   implicit val testSettings = TestKitSettings(system)
+
+  // FIXME eventfilter support in typed testkit
+  import scaladsl.adapter._
+  implicit val untypedSystem = system.toUntyped
 
   "Deferred behavior" must {
     "must create underlying" in {
@@ -46,29 +56,31 @@ class DeferredSpec extends ActorTestKit with TypedAkkaSpecWithShutdown {
 
     "must stop when exception from factory" in {
       val probe = TestProbe[Event]("evt")
-      val behv = Behaviors.setup[Command] { ctx ⇒
-        val child = ctx.spawnAnonymous(Behaviors.setup[Command] { _ ⇒
+      val behv = Behaviors.setup[Command] { context ⇒
+        val child = context.spawnAnonymous(Behaviors.setup[Command] { _ ⇒
           probe.ref ! Started
           throw new RuntimeException("simulated exc from factory") with NoStackTrace
         })
-        ctx.watch(child)
-        Behaviors.immutable[Command]((_, _) ⇒ Behaviors.same).onSignal {
+        context.watch(child)
+        Behaviors.receive[Command]((_, _) ⇒ Behaviors.same).receiveSignal {
           case (_, Terminated(`child`)) ⇒
             probe.ref ! Pong
             Behaviors.stopped
         }
       }
-      spawn(behv)
-      probe.expectMessage(Started)
-      probe.expectMessage(Pong)
+      EventFilter[ActorInitializationException](occurrences = 1).intercept {
+        spawn(behv)
+        probe.expectMessage(Started)
+        probe.expectMessage(Pong)
+      }
     }
 
     "must stop when deferred result it Stopped" in {
       val probe = TestProbe[Event]("evt")
-      val behv = Behaviors.setup[Command] { ctx ⇒
-        val child = ctx.spawnAnonymous(Behaviors.setup[Command](_ ⇒ Behaviors.stopped))
-        ctx.watch(child)
-        Behaviors.immutable[Command]((_, _) ⇒ Behaviors.same).onSignal {
+      val behv = Behaviors.setup[Command] { context ⇒
+        val child = context.spawnAnonymous(Behaviors.setup[Command](_ ⇒ Behaviors.stopped))
+        context.watch(child)
+        Behaviors.receive[Command]((_, _) ⇒ Behaviors.same).receiveSignal {
           case (_, Terminated(`child`)) ⇒
             probe.ref ! Pong
             Behaviors.stopped
@@ -122,10 +134,21 @@ class DeferredSpec extends ActorTestKit with TypedAkkaSpecWithShutdown {
       monitorProbe.expectMessage(Ping)
       probe.expectMessage(Pong)
     }
+
+    "must not allow setup(same)" in {
+      val probe = TestProbe[Any]()
+      val behv = Behaviors.setup[Command] { _ ⇒
+        Behaviors.setup[Command] { _ ⇒ Behaviors.same }
+      }
+      EventFilter[ActorInitializationException](occurrences = 1).intercept {
+        val ref = spawn(behv)
+        probe.expectTerminated(ref, probe.remainingOrDefault)
+      }
+    }
   }
 }
 
-class DeferredStubbedSpec extends TypedAkkaSpec {
+class DeferredStubbedSpec extends WordSpec with Matchers {
 
   import DeferredSpec._
 

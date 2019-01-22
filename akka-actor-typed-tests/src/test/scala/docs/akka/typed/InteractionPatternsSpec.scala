@@ -1,21 +1,24 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <http://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package docs.akka.typed
 
 import java.net.URI
 
 import akka.NotUsed
-import akka.actor.typed.{ ActorRef, ActorSystem, Behavior, TypedAkkaSpecWithShutdown }
-import akka.actor.typed.scaladsl.{ ActorContext, Behaviors, TimerScheduler }
-import akka.testkit.typed.scaladsl.{ ActorTestKit, TestProbe }
+import akka.actor.typed.{ ActorRef, ActorSystem, Behavior }
+import akka.actor.typed.scaladsl.{ Behaviors, TimerScheduler }
+import akka.actor.testkit.typed.scaladsl.TestProbe
 import akka.util.Timeout
 
 import scala.concurrent.Future
 import scala.concurrent.duration._
 import scala.util.{ Failure, Success }
+import akka.actor.testkit.typed.scaladsl.ScalaTestWithActorTestKit
+import org.scalatest.WordSpecLike
 
-class InteractionPatternsSpec extends ActorTestKit with TypedAkkaSpecWithShutdown {
+class InteractionPatternsSpec extends ScalaTestWithActorTestKit with WordSpecLike {
 
   "The interaction patterns docs" must {
 
@@ -23,9 +26,9 @@ class InteractionPatternsSpec extends ActorTestKit with TypedAkkaSpecWithShutdow
       // #fire-and-forget-definition
       case class PrintMe(message: String)
 
-      val printerBehavior: Behavior[PrintMe] = Behaviors.immutable {
-        case (ctx, PrintMe(message)) ⇒
-          ctx.log.info(message)
+      val printerBehavior: Behavior[PrintMe] = Behaviors.receive {
+        case (context, PrintMe(message)) ⇒
+          context.log.info(message)
           Behaviors.same
       }
       // #fire-and-forget-definition
@@ -52,13 +55,11 @@ class InteractionPatternsSpec extends ActorTestKit with TypedAkkaSpecWithShutdow
       // #request-response-protocol
 
       // #request-response-respond
-      val otherBehavior = Behaviors.immutable[Request] { (ctx, msg) ⇒
-        msg match {
-          case Request(query, respondTo) ⇒
-            // ... process query ...
-            respondTo ! Response("Here's your cookies!")
-            Behaviors.same
-        }
+      val otherBehavior = Behaviors.receiveMessage[Request] {
+        case Request(query, respondTo) ⇒
+          // ... process query ...
+          respondTo ! Response("Here's your cookies!")
+          Behaviors.same
       }
       // #request-response-respond
 
@@ -66,14 +67,14 @@ class InteractionPatternsSpec extends ActorTestKit with TypedAkkaSpecWithShutdow
       val probe = TestProbe[Response]()
       // shhh, don't tell anyone
       import scala.language.reflectiveCalls
-      val ctx = new {
+      val context = new {
         def self = probe.ref
       }
       // #request-response-send
-      otherActor ! Request("give me cookies", ctx.self)
+      otherActor ! Request("give me cookies", context.self)
       // #request-response-send
 
-      probe.expectMessageType[Response]
+      probe.receiveMessage()
     }
 
     "contain a sample for adapted response" in {
@@ -100,32 +101,30 @@ class InteractionPatternsSpec extends ActorTestKit with TypedAkkaSpecWithShutdow
         private final case class WrappedBackendResponse(response: Backend.Response) extends Command
 
         def translator(backend: ActorRef[Backend.Request]): Behavior[Command] =
-          Behaviors.setup[Command] { ctx ⇒
+          Behaviors.setup[Command] { context ⇒
             val backendResponseMapper: ActorRef[Backend.Response] =
-              ctx.messageAdapter(rsp ⇒ WrappedBackendResponse(rsp))
+              context.messageAdapter(rsp ⇒ WrappedBackendResponse(rsp))
 
             def active(
               inProgress: Map[Int, ActorRef[URI]],
               count:      Int): Behavior[Command] = {
-              Behaviors.immutable[Command] { (_, msg) ⇒
-                msg match {
-                  case Translate(site, replyTo) ⇒
-                    val taskId = count + 1
-                    backend ! Backend.StartTranslationJob(taskId, site, backendResponseMapper)
-                    active(inProgress.updated(taskId, replyTo), taskId)
+              Behaviors.receiveMessage[Command] {
+                case Translate(site, replyTo) ⇒
+                  val taskId = count + 1
+                  backend ! Backend.StartTranslationJob(taskId, site, backendResponseMapper)
+                  active(inProgress.updated(taskId, replyTo), taskId)
 
-                  case wrapped: WrappedBackendResponse ⇒ wrapped.response match {
-                    case Backend.JobStarted(taskId) ⇒
-                      ctx.log.info("Started {}", taskId)
-                      Behaviors.same
-                    case Backend.JobProgress(taskId, progress) ⇒
-                      ctx.log.info("Progress {}: {}", taskId, progress)
-                      Behaviors.same
-                    case Backend.JobCompleted(taskId, result) ⇒
-                      ctx.log.info("Completed {}: {}", taskId, result)
-                      inProgress(taskId) ! result
-                      active(inProgress - taskId, count)
-                  }
+                case wrapped: WrappedBackendResponse ⇒ wrapped.response match {
+                  case Backend.JobStarted(taskId) ⇒
+                    context.log.info("Started {}", taskId)
+                    Behaviors.same
+                  case Backend.JobProgress(taskId, progress) ⇒
+                    context.log.info("Progress {}: {}", taskId, progress)
+                    Behaviors.same
+                  case Backend.JobCompleted(taskId, result) ⇒
+                    context.log.info("Completed {}: {}", taskId, result)
+                    inProgress(taskId) ! result
+                    active(inProgress - taskId, count)
                 }
               }
             }
@@ -135,16 +134,14 @@ class InteractionPatternsSpec extends ActorTestKit with TypedAkkaSpecWithShutdow
       }
       // #adapted-response
 
-      val backend = spawn(Behaviors.immutable[Backend.Request] { (_, msg) ⇒
-        msg match {
-          case Backend.StartTranslationJob(taskId, site, replyTo) ⇒
-            replyTo ! Backend.JobStarted(taskId)
-            replyTo ! Backend.JobProgress(taskId, 0.25)
-            replyTo ! Backend.JobProgress(taskId, 0.50)
-            replyTo ! Backend.JobProgress(taskId, 0.75)
-            replyTo ! Backend.JobCompleted(taskId, new URI("https://akka.io/docs/sv/"))
-            Behaviors.same
-        }
+      val backend = spawn(Behaviors.receiveMessage[Backend.Request] {
+        case Backend.StartTranslationJob(taskId, site, replyTo) ⇒
+          replyTo ! Backend.JobStarted(taskId)
+          replyTo ! Backend.JobProgress(taskId, 0.25)
+          replyTo ! Backend.JobProgress(taskId, 0.50)
+          replyTo ! Backend.JobProgress(taskId, 0.75)
+          replyTo ! Backend.JobCompleted(taskId, new URI("https://akka.io/docs/sv/"))
+          Behaviors.same
       })
 
       val frontend = spawn(Frontend.translator(backend))
@@ -161,7 +158,7 @@ class InteractionPatternsSpec extends ActorTestKit with TypedAkkaSpecWithShutdow
     case object TimerKey
 
     trait Msg
-    case class ExcitingMessage(msg: String) extends Msg
+    case class ExcitingMessage(message: String) extends Msg
     final case class Batch(messages: Vector[Msg])
     case object Timeout extends Msg
 
@@ -171,28 +168,26 @@ class InteractionPatternsSpec extends ActorTestKit with TypedAkkaSpecWithShutdow
 
     def idle(timers: TimerScheduler[Msg], target: ActorRef[Batch],
              after: FiniteDuration, maxSize: Int): Behavior[Msg] = {
-      Behaviors.immutable[Msg] { (ctx, msg) ⇒
+      Behaviors.receiveMessage[Msg] { message ⇒
         timers.startSingleTimer(TimerKey, Timeout, after)
-        active(Vector(msg), timers, target, after, maxSize)
+        active(Vector(message), timers, target, after, maxSize)
       }
     }
 
     def active(buffer: Vector[Msg], timers: TimerScheduler[Msg],
                target: ActorRef[Batch], after: FiniteDuration, maxSize: Int): Behavior[Msg] = {
-      Behaviors.immutable[Msg] { (_, msg) ⇒
-        msg match {
-          case Timeout ⇒
-            target ! Batch(buffer)
+      Behaviors.receiveMessage[Msg] {
+        case Timeout ⇒
+          target ! Batch(buffer)
+          idle(timers, target, after, maxSize)
+        case m ⇒
+          val newBuffer = buffer :+ m
+          if (newBuffer.size == maxSize) {
+            timers.cancel(TimerKey)
+            target ! Batch(newBuffer)
             idle(timers, target, after, maxSize)
-          case m ⇒
-            val newBuffer = buffer :+ m
-            if (newBuffer.size == maxSize) {
-              timers.cancel(TimerKey)
-              target ! Batch(newBuffer)
-              idle(timers, target, after, maxSize)
-            } else
-              active(newBuffer, timers, target, after, maxSize)
-        }
+          } else
+            active(newBuffer, timers, target, after, maxSize)
       }
     }
     //#timer
@@ -211,19 +206,17 @@ class InteractionPatternsSpec extends ActorTestKit with TypedAkkaSpecWithShutdow
     case class OpenThePodBayDoorsPlease(respondTo: ActorRef[HalResponse]) extends HalCommand
     case class HalResponse(message: String)
 
-    val halBehavior = Behaviors.immutable[HalCommand] { (ctx, msg) ⇒
-      msg match {
-        case OpenThePodBayDoorsPlease(respondTo) ⇒
-          respondTo ! HalResponse("I'm sorry, Dave. I'm afraid I can't do that.")
-          Behaviors.same
-      }
+    val halBehavior = Behaviors.receiveMessage[HalCommand] {
+      case OpenThePodBayDoorsPlease(respondTo) ⇒
+        respondTo ! HalResponse("I'm sorry, Dave. I'm afraid I can't do that.")
+        Behaviors.same
     }
 
     sealed trait DaveMessage
     // this is a part of the protocol that is internal to the actor itself
     case class AdaptedResponse(message: String) extends DaveMessage
 
-    def daveBehavior(hal: ActorRef[HalCommand]) = Behaviors.setup[DaveMessage] { ctx ⇒
+    def daveBehavior(hal: ActorRef[HalCommand]) = Behaviors.setup[DaveMessage] { context ⇒
 
       // asking someone requires a timeout, if the timeout hits without response
       // the ask is failed with a TimeoutException
@@ -233,7 +226,7 @@ class InteractionPatternsSpec extends ActorTestKit with TypedAkkaSpecWithShutdow
       // as OpenThePodBayDoorsPlease is a case class it has a factory apply method
       // that is what we are passing as the second parameter here it could also be written
       // as `ref => OpenThePodBayDoorsPlease(ref)`
-      ctx.ask(hal)(OpenThePodBayDoorsPlease) {
+      context.ask(hal)(OpenThePodBayDoorsPlease) {
         case Success(HalResponse(message)) ⇒ AdaptedResponse(message)
         case Failure(ex)                   ⇒ AdaptedResponse("Request failed")
       }
@@ -243,19 +236,17 @@ class InteractionPatternsSpec extends ActorTestKit with TypedAkkaSpecWithShutdow
       // changed at the time the response arrives and the transformation is done, best is to
       // use immutable state we have closed over like here.
       val requestId = 1
-      ctx.ask(hal)(OpenThePodBayDoorsPlease) {
+      context.ask(hal)(OpenThePodBayDoorsPlease) {
         case Success(HalResponse(message)) ⇒ AdaptedResponse(s"$requestId: $message")
         case Failure(ex)                   ⇒ AdaptedResponse(s"$requestId: Request failed")
       }
 
-      Behaviors.immutable { (ctx, msg) ⇒
-        msg match {
-          // the adapted message ends up being processed like any other
-          // message sent to the actor
-          case AdaptedResponse(msg) ⇒
-            ctx.log.info("Got response from hal: {}", msg)
-            Behaviors.same
-        }
+      Behaviors.receiveMessage {
+        // the adapted message ends up being processed like any other
+        // message sent to the actor
+        case AdaptedResponse(message) ⇒
+          context.log.info("Got response from hal: {}", message)
+          Behaviors.same
       }
     }
     // #actor-ask
@@ -276,19 +267,15 @@ class InteractionPatternsSpec extends ActorTestKit with TypedAkkaSpecWithShutdow
 
     // #per-session-child
 
-    val keyCabinetBehavior: Behavior[GetKeys] = Behaviors.immutable { (ctx, msg) ⇒
-      msg match {
-        case GetKeys(_, respondTo) ⇒
-          respondTo ! Keys()
-          Behaviors.same
-      }
+    val keyCabinetBehavior: Behavior[GetKeys] = Behaviors.receiveMessage {
+      case GetKeys(_, respondTo) ⇒
+        respondTo ! Keys()
+        Behaviors.same
     }
-    val drawerBehavior: Behavior[GetWallet] = Behaviors.immutable { (ctx, msg) ⇒
-      msg match {
-        case GetWallet(_, respondTo) ⇒
-          respondTo ! Wallet()
-          Behaviors.same
-      }
+    val drawerBehavior: Behavior[GetWallet] = Behaviors.receiveMessage {
+      case GetWallet(_, respondTo) ⇒
+        respondTo ! Wallet()
+        Behaviors.same
     }
 
     // #per-session-child
@@ -300,13 +287,13 @@ class InteractionPatternsSpec extends ActorTestKit with TypedAkkaSpecWithShutdow
     case class GetKeys(whoseKeys: String, respondTo: ActorRef[Keys])
     case class GetWallet(whoseWallet: String, respondTo: ActorRef[Wallet])
 
-    def homeBehavior = Behaviors.immutable[HomeCommand] { (ctx, msg) ⇒
-      val keyCabinet: ActorRef[GetKeys] = ctx.spawn(keyCabinetBehavior, "key-cabinet")
-      val drawer: ActorRef[GetWallet] = ctx.spawn(drawerBehavior, "drawer")
+    def homeBehavior = Behaviors.receive[HomeCommand] { (context, message) ⇒
+      val keyCabinet: ActorRef[GetKeys] = context.spawn(keyCabinetBehavior, "key-cabinet")
+      val drawer: ActorRef[GetWallet] = context.spawn(drawerBehavior, "drawer")
 
-      msg match {
+      message match {
         case LeaveHome(who, respondTo) ⇒
-          ctx.spawn(prepareToLeaveHome(who, respondTo, keyCabinet, drawer), s"leaving-$who")
+          context.spawn(prepareToLeaveHome(who, respondTo, keyCabinet, drawer), s"leaving-$who")
           Behavior.same
       }
     }
@@ -320,13 +307,13 @@ class InteractionPatternsSpec extends ActorTestKit with TypedAkkaSpecWithShutdow
       // we don't _really_ care about the actor protocol here as nobody will send us
       // messages except for responses to our queries, so we just accept any kind of message
       // but narrow that to more limited types then we interact
-      Behaviors.setup[AnyRef] { ctx ⇒
+      Behaviors.setup[AnyRef] { context ⇒
         var wallet: Option[Wallet] = None
         var keys: Option[Keys] = None
 
         // we narrow the ActorRef type to any subtype of the actual type we accept
-        keyCabinet ! GetKeys(whoIsLeaving, ctx.self.narrow[Keys])
-        drawer ! GetWallet(whoIsLeaving, ctx.self.narrow[Wallet])
+        keyCabinet ! GetKeys(whoIsLeaving, context.self.narrow[Keys])
+        drawer ! GetWallet(whoIsLeaving, context.self.narrow[Wallet])
 
         def nextBehavior: Behavior[AnyRef] =
           (keys, wallet) match {
@@ -339,18 +326,16 @@ class InteractionPatternsSpec extends ActorTestKit with TypedAkkaSpecWithShutdow
               Behavior.same
           }
 
-        Behaviors.immutable((ctx, msg) ⇒ {
-          msg match {
-            case w: Wallet ⇒
-              wallet = Some(w)
-              nextBehavior
-            case k: Keys ⇒
-              keys = Some(k)
-              nextBehavior
-            case _ ⇒
-              Behaviors.unhandled
-          }
-        })
+        Behaviors.receiveMessage {
+          case w: Wallet ⇒
+            wallet = Some(w)
+            nextBehavior
+          case k: Keys ⇒
+            keys = Some(k)
+            nextBehavior
+          case _ ⇒
+            Behaviors.unhandled
+        }
       }.narrow[NotUsed] // we don't let anyone else know we accept anything
     // #per-session-child
 
@@ -369,8 +354,8 @@ class InteractionPatternsSpec extends ActorTestKit with TypedAkkaSpecWithShutdow
     // #standalone-ask
 
     // keep this out of the sample as it uses the testkit spawn
-    val cookieActorRef = spawn(Behaviors.immutable[GiveMeCookies] { (ctx, msg) ⇒
-      msg.replyTo ! Cookies(5)
+    val cookieActorRef = spawn(Behaviors.receiveMessage[GiveMeCookies] { message ⇒
+      message.replyTo ! Cookies(5)
       Behaviors.same
     })
 

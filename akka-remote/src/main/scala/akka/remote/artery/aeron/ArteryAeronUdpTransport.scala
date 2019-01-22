@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2016-2017 Lightbend Inc. <http://www.lightbend.com>
+/*
+ * Copyright (C) 2016-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.remote.artery
 package aeron
 
@@ -11,10 +12,10 @@ import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 
 import scala.annotation.tailrec
-import scala.concurrent.Future
+import scala.collection.immutable
+import scala.concurrent.{ Await, Future }
 import scala.concurrent.duration._
 import scala.util.control.NonFatal
-
 import akka.Done
 import akka.actor.Address
 import akka.actor.Cancellable
@@ -24,12 +25,11 @@ import akka.remote.RemoteActorRefProvider
 import akka.remote.RemoteTransportException
 import akka.remote.artery.compress._
 import akka.stream.KillSwitches
-import akka.stream.SharedKillSwitch
 import akka.stream.scaladsl.Flow
 import akka.stream.scaladsl.Keep
 import akka.stream.scaladsl.Sink
 import akka.stream.scaladsl.Source
-import akka.util.OptionVal
+import akka.util.ccompat._
 import io.aeron.Aeron
 import io.aeron.AvailableImageHandler
 import io.aeron.CncFileDescriptor
@@ -44,7 +44,6 @@ import io.aeron.status.ChannelEndpointStatus
 import org.agrona.DirectBuffer
 import org.agrona.ErrorHandler
 import org.agrona.IoUtil
-import org.agrona.collections.IntObjConsumer
 import org.agrona.concurrent.BackoffIdleStrategy
 import org.agrona.concurrent.status.CountersReader.MetaData
 
@@ -53,10 +52,12 @@ import org.agrona.concurrent.status.CountersReader.MetaData
  */
 private[remote] class ArteryAeronUdpTransport(_system: ExtendedActorSystem, _provider: RemoteActorRefProvider)
   extends ArteryTransport(_system, _provider) {
-  import AeronSource.ResourceLifecycle
+  import AeronSource.AeronLifecycle
   import ArteryTransport._
   import Decoder.InboundCompressionAccess
   import FlightRecorderEvents._
+
+  override type LifeCycle = AeronLifecycle
 
   private[this] val mediaDriver = new AtomicReference[Option[MediaDriver]](None)
   @volatile private[this] var aeron: Aeron = _
@@ -177,7 +178,7 @@ private[remote] class ArteryAeronUdpTransport(_system: ExtendedActorSystem, _pro
         // freeSessionBuffer in AeronSource FragmentAssembler
         streamMatValues.get.valuesIterator.foreach {
           case InboundStreamMatValues(resourceLife, _) ⇒
-            resourceLife.foreach(_.onUnavailableImage(img.sessionId))
+            resourceLife.onUnavailableImage(img.sessionId)
         }
       }
     })
@@ -220,13 +221,14 @@ private[remote] class ArteryAeronUdpTransport(_system: ExtendedActorSystem, _pro
   }
 
   private def blockUntilChannelActive(): Unit = {
-    val counterIdForInboundChannel = findCounterId(s"rcv-channel: $inboundChannel")
+    val aeronLifecyle = streamMatValues.get()(ControlStreamId).lifeCycle
+
     val waitInterval = 200
     val retries = math.max(1, settings.Bind.BindTimeout.toMillis / waitInterval)
     retry(retries)
 
     @tailrec def retry(retries: Long): Unit = {
-      val status = aeron.countersReader().getCounterValue(counterIdForInboundChannel)
+      val status = Await.result(aeronLifecyle.channelEndpointStatus(), settings.Bind.BindTimeout)
       if (status == ChannelEndpointStatus.ACTIVE) {
         log.debug("Inbound channel is now active")
       } else if (status == ChannelEndpointStatus.ERRORED) {
@@ -241,21 +243,6 @@ private[remote] class ArteryAeronUdpTransport(_system: ExtendedActorSystem, _pro
         stopMediaDriver()
         throw new RemoteTransportException("Timed out waiting for Aeron transport to bind. See Aeoron logs.")
       }
-    }
-  }
-
-  private def findCounterId(label: String): Int = {
-    var counterId = -1
-    aeron.countersReader().forEach(new IntObjConsumer[String] {
-      def accept(i: Int, l: String): Unit = {
-        if (label == l)
-          counterId = i
-      }
-    })
-    if (counterId == -1) {
-      throw new RuntimeException(s"Unable to found counterId for label: $label")
-    } else {
-      counterId
     }
   }
 
@@ -301,7 +288,7 @@ private[remote] class ArteryAeronUdpTransport(_system: ExtendedActorSystem, _pro
       bufferPool, giveUpAfter, createFlightRecorderEventSink()))
   }
 
-  private def aeronSource(streamId: Int, pool: EnvelopeBufferPool): Source[EnvelopeBuffer, AeronSource.ResourceLifecycle] =
+  private def aeronSource(streamId: Int, pool: EnvelopeBufferPool): Source[EnvelopeBuffer, AeronSource.AeronLifecycle] =
     Source.fromGraph(new AeronSource(inboundChannel, streamId, aeron, taskRunner, pool,
       createFlightRecorderEventSink(), aeronSourceSpinningStrategy))
 
@@ -322,6 +309,7 @@ private[remote] class ArteryAeronUdpTransport(_system: ExtendedActorSystem, _pro
 
   private def runInboundControlStream(): Unit = {
     if (isShutdown) throw ShuttingDown
+
     val (resourceLife, ctrl, completed) =
       aeronSource(ControlStreamId, envelopeBufferPool)
         .via(inboundFlow(settings, NoInboundCompressions))
@@ -346,7 +334,7 @@ private[remote] class ArteryAeronUdpTransport(_system: ExtendedActorSystem, _pro
 
       } else {
         val laneKillSwitch = KillSwitches.shared("laneKillSwitch")
-        val laneSource: Source[InboundEnvelope, (ResourceLifecycle, InboundCompressionAccess)] =
+        val laneSource: Source[InboundEnvelope, (AeronLifecycle, InboundCompressionAccess)] =
           aeronSource(OrdinaryStreamId, envelopeBufferPool)
             .via(laneKillSwitch.flow)
             .viaMat(inboundFlow(settings, _inboundCompressions))(Keep.both)
@@ -360,9 +348,9 @@ private[remote] class ArteryAeronUdpTransport(_system: ExtendedActorSystem, _pro
 
         val lane = inboundSink(envelopeBufferPool)
         val completedValues: Vector[Future[Done]] =
-          (0 until inboundLanes).map { _ ⇒
+          (0 until inboundLanes).iterator.map { _ ⇒
             laneHub.toMat(lane)(Keep.right).run()(materializer)
-          }(collection.breakOut)
+          }.to(immutable.Vector)
 
         import system.dispatcher
 
@@ -392,10 +380,10 @@ private[remote] class ArteryAeronUdpTransport(_system: ExtendedActorSystem, _pro
     attachInboundStreamRestart("Inbound large message stream", completed, () ⇒ runInboundLargeMessagesStream())
   }
 
-  private def updateStreamMatValues(streamId: Int, aeronSourceLifecycle: AeronSource.ResourceLifecycle, completed: Future[Done]): Unit = {
+  private def updateStreamMatValues(streamId: Int, aeronSourceLifecycle: AeronSource.AeronLifecycle, completed: Future[Done]): Unit = {
     implicit val ec = materializer.executionContext
-    updateStreamMatValues(streamId, InboundStreamMatValues(
-      Some(aeronSourceLifecycle),
+    updateStreamMatValues(streamId, InboundStreamMatValues[AeronLifecycle](
+      aeronSourceLifecycle,
       completed.recover { case _ ⇒ Done }))
   }
 

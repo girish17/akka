@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2015-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2015-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.stream.impl
 
 import akka.actor.ActorLogging
@@ -45,7 +46,7 @@ import akka.stream.ActorMaterializerSettings
     .orElse(receiveElem)
 
   def receiveComplete: Receive = completionMatcher.andThen { _ ⇒
-    if (bufferSize == 0 || buffer.isEmpty) context.stop(self) // will complete the stream successfully
+    if (bufferSize == 0 || buffer.isEmpty) onCompleteThenStop() // will complete the stream successfully
     else context.become(drainBufferThenComplete)
   }
 
@@ -71,27 +72,27 @@ import akka.stream.ActorMaterializerSettings
       else if (!buffer.isFull)
         buffer.enqueue(elem)
       else overflowStrategy match {
-        case DropHead ⇒
-          log.debug("Dropping the head element because buffer is full and overflowStrategy is: [DropHead]")
+        case s: DropHead ⇒
+          log.log(s.logLevel, "Dropping the head element because buffer is full and overflowStrategy is: [DropHead]")
           buffer.dropHead()
           buffer.enqueue(elem)
-        case DropTail ⇒
-          log.debug("Dropping the tail element because buffer is full and overflowStrategy is: [DropTail]")
+        case s: DropTail ⇒
+          log.log(s.logLevel, "Dropping the tail element because buffer is full and overflowStrategy is: [DropTail]")
           buffer.dropTail()
           buffer.enqueue(elem)
-        case DropBuffer ⇒
-          log.debug("Dropping all the buffered elements because buffer is full and overflowStrategy is: [DropBuffer]")
+        case s: DropBuffer ⇒
+          log.log(s.logLevel, "Dropping all the buffered elements because buffer is full and overflowStrategy is: [DropBuffer]")
           buffer.clear()
           buffer.enqueue(elem)
-        case DropNew ⇒
+        case s: DropNew ⇒
           // do not enqueue new element if the buffer is full
-          log.debug("Dropping the new element because buffer is full and overflowStrategy is: [DropNew]")
-        case Fail ⇒
-          log.error("Failing because buffer is full and overflowStrategy is: [Fail]")
-          onErrorThenStop(new BufferOverflowException(s"Buffer overflow (max capacity was: $bufferSize)!"))
-        case Backpressure ⇒
+          log.log(s.logLevel, "Dropping the new element because buffer is full and overflowStrategy is: [DropNew]")
+        case s: Fail ⇒
+          log.log(s.logLevel, "Failing because buffer is full and overflowStrategy is: [Fail]")
+          onErrorThenStop(BufferOverflowException(s"Buffer overflow (max capacity was: $bufferSize)!"))
+        case s: Backpressure ⇒
           // there is a precondition check in Source.actorRefSource factory method
-          log.debug("Backpressuring because buffer is full and overflowStrategy is: [Backpressure]")
+          log.log(s.logLevel, "Backpressuring because buffer is full and overflowStrategy is: [Backpressure]")
       }
   }
 
@@ -109,7 +110,7 @@ import akka.stream.ActorMaterializerSettings
       while (totalDemand > 0L && !buffer.isEmpty)
         onNext(buffer.dequeue())
 
-      if (buffer.isEmpty) context.stop(self) // will complete the stream successfully
+      if (buffer.isEmpty) onCompleteThenStop() // will complete the stream successfully
 
     case elem if isActive ⇒
       log.debug("Dropping element because Status.Success received already, " +

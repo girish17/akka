@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.remote.testconductor
 
 import language.postfixOps
@@ -477,7 +478,7 @@ private[akka] class Controller(private var initialParticipants: Int, controllerP
     case GetSockAddr ⇒ sender() ! connection.getLocalAddress
   }
 
-  override def postStop() {
+  override def postStop(): Unit = {
     RemoteConnection.shutdown(connection)
   }
 }
@@ -532,8 +533,8 @@ private[akka] class BarrierCoordinator extends Actor with LoggingFSM[BarrierCoor
   // this shall be set to true if all subsequent barriers shall fail
   var failed = false
 
-  override def preRestart(reason: Throwable, message: Option[Any]) {}
-  override def postRestart(reason: Throwable) { failed = true }
+  override def preRestart(reason: Throwable, message: Option[Any]): Unit = {}
+  override def postRestart(reason: Throwable): Unit = { failed = true }
 
   // TODO what happens with the other waiting players in case of a test failure?
 

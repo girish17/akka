@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2016-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2016-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.remote.artery
 
 import java.io.File
@@ -41,7 +42,7 @@ object BenchmarkFileReporter {
         Try("git describe".!!.trim).getOrElse("[unknown]")
       }
       val testResultFile: File = {
-        val timestamp = formatter.format(LocalDateTime.ofInstant(Instant.now(), ZoneId.systemDefault()));
+        val timestamp = formatter.format(LocalDateTime.ofInstant(Instant.now(), ZoneId.systemDefault()))
         val fileName = s"$timestamp-Artery-$testName-$gitCommit-results.txt"
         new File(targetDirectory, fileName)
       }

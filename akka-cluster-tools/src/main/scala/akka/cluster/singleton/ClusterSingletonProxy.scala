@@ -1,5 +1,5 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.cluster.singleton
@@ -96,6 +96,8 @@ final class ClusterSingletonProxySettings(
   def withRole(role: Option[String]): ClusterSingletonProxySettings = copy(role = role)
 
   def withDataCenter(dataCenter: DataCenter): ClusterSingletonProxySettings = copy(dataCenter = Some(dataCenter))
+
+  def withDataCenter(dataCenter: Option[DataCenter]): ClusterSingletonProxySettings = copy(dataCenter = dataCenter)
 
   def withSingletonIdentificationInterval(singletonIdentificationInterval: FiniteDuration): ClusterSingletonProxySettings =
     copy(singletonIdentificationInterval = singletonIdentificationInterval)
@@ -197,7 +199,7 @@ final class ClusterSingletonProxy(singletonManagerPath: String, settings: Cluste
   /**
    * Discard old singleton ActorRef and send a periodic message to self to identify the singleton.
    */
-  def identifySingleton() {
+  def identifySingleton(): Unit = {
     import context.dispatcher
     log.debug("Creating singleton identification timer...")
     identifyCounter += 1
@@ -284,7 +286,7 @@ final class ClusterSingletonProxy(singletonManagerPath: String, settings: Cluste
         case Some(s) ⇒
           if (log.isDebugEnabled)
             log.debug(
-              "Forwarding message of type [{}] to current singleton instance at [{}]: {}",
+              "Forwarding message of type [{}] to current singleton instance at [{}]",
               Logging.simpleName(msg.getClass), s.path)
           s forward msg
         case None ⇒

@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2016-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2016-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.cluster
 
 import akka.Done
@@ -51,8 +52,12 @@ private[akka] class CoordinatedShutdownLeave extends Actor {
     case MemberLeft(m) ⇒
       if (m.uniqueAddress == cluster.selfUniqueAddress)
         done(replyTo)
-    case MemberRemoved(m, _) ⇒
+    case MemberDowned(m) ⇒
       // in case it was downed instead
+      if (m.uniqueAddress == cluster.selfUniqueAddress)
+        done(replyTo)
+    case MemberRemoved(m, _) ⇒
+      // final safety fallback
       if (m.uniqueAddress == cluster.selfUniqueAddress)
         done(replyTo)
   }

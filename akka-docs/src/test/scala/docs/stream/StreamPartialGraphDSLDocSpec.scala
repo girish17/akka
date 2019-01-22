@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2014-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2014-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package docs.stream
 
 import akka.actor.ActorRef
@@ -116,7 +117,7 @@ class StreamPartialGraphDSLDocSpec extends AkkaSpec {
     val actorRef: ActorRef = testActor
     //#sink-combine
     val sendRmotely = Sink.actorRef(actorRef, "Done")
-    val localProcessing = Sink.foreach[Int](_ ⇒ /* do something usefull */ ())
+    val localProcessing = Sink.foreach[Int](_ ⇒ /* do something useful */ ())
 
     val sink = Sink.combine(sendRmotely, localProcessing)(Broadcast[Int](_))
 

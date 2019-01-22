@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.persistence
 
 import java.lang.{ Iterable ⇒ JIterable }
@@ -8,7 +9,6 @@ import java.lang.{ Iterable ⇒ JIterable }
 import akka.actor._
 import akka.japi.Procedure
 import akka.japi.Util
-import akka.persistence.Eventsourced.{ AsyncHandlerInvocation, StashingHandlerInvocation }
 import com.typesafe.config.Config
 import scala.collection.immutable
 import scala.util.control.NoStackTrace
@@ -99,9 +99,15 @@ object Recovery {
 
   /**
    * Convenience method for skipping recovery in [[PersistentActor]].
+   *
+   * It will still retrieve previously highest sequence number so that new events are persisted with
+   * higher sequence numbers rather than starting from 1 and assuming that there are no
+   * previous event with that sequence number.
+   *
    * @see [[Recovery]]
    */
   val none: Recovery = Recovery(toSequenceNr = 0L, fromSnapshot = SnapshotSelectionCriteria.None)
+
 }
 
 final class RecoveryTimedOut(message: String) extends RuntimeException(message) with NoStackTrace
@@ -264,6 +270,28 @@ trait PersistentActor extends Eventsourced with PersistenceIdentity {
   def deferAsync[A](event: A)(handler: A ⇒ Unit): Unit = {
     internalDeferAsync(event)(handler)
   }
+
+  /**
+   * Defer the handler execution until all pending handlers have been executed. It is guaranteed that no new commands
+   * will be received by a persistent actor between a call to `defer` and the execution of its `handler`.
+   * Allows to define logic within the actor, which will respect the invocation-order-guarantee
+   * in respect to `persistAsync` or `persist` calls. That is, if `persistAsync` or `persist` was invoked before `defer`,
+   * the corresponding handlers will be invoked in the same order as they were registered in.
+   *
+   * This call will NOT result in `event` being persisted, use `persist` or `persistAsync` instead
+   * if the given event should possible to replay.
+   *
+   * If there are no pending persist handler calls, the handler will be called immediately.
+   *
+   * If persistence of an earlier event fails, the persistent actor will stop, and the `handler`
+   * will not be run.
+   *
+   * @param event event to be handled in the future, when preceding persist operations have been processes
+   * @param handler handler for the given `event`
+   */
+  def defer[A](event: A)(handler: A ⇒ Unit): Unit = {
+    internalDefer(event)(handler)
+  }
 }
 
 /**
@@ -377,6 +405,28 @@ abstract class UntypedPersistentActor extends UntypedActor with Eventsourced wit
    */
   def deferAsync[A](event: A)(handler: Procedure[A]): Unit =
     internalDeferAsync(event)(event ⇒ handler(event))
+
+  /**
+   * Defer the handler execution until all pending handlers have been executed. It is guaranteed that no new commands
+   * will be received by a persistent actor between a call to `defer` and the execution of its `handler`.
+   * Allows to define logic within the actor, which will respect the invocation-order-guarantee
+   * in respect to `persistAsync` or `persist` calls. That is, if `persistAsync` or `persist` was invoked before `defer`,
+   * the corresponding handlers will be invoked in the same order as they were registered in.
+   *
+   * This call will NOT result in `event` being persisted, use `persist` or `persistAsync` instead
+   * if the given event should possible to replay.
+   *
+   * If there are no pending persist handler calls, the handler will be called immediately.
+   *
+   * If persistence of an earlier event fails, the persistent actor will stop, and the `handler`
+   * will not be run.
+   *
+   * @param event event to be handled in the future, when preceding persist operations have been processes
+   * @param handler handler for the given `event`
+   */
+  def defer[A](event: A)(handler: Procedure[A]): Unit = {
+    internalDefer(event)(event ⇒ handler(event))
+  }
 
   /**
    * Java API: recovery handler that receives persisted events during recovery. If a state snapshot
@@ -561,6 +611,28 @@ abstract class AbstractPersistentActor extends AbstractActor with AbstractPersis
    */
   def deferAsync[A](event: A)(handler: Procedure[A]): Unit =
     internalDeferAsync(event)(event ⇒ handler(event))
+
+  /**
+   * Defer the handler execution until all pending handlers have been executed. It is guaranteed that no new commands
+   * will be received by a persistent actor between a call to `defer` and the execution of its `handler`.
+   * Allows to define logic within the actor, which will respect the invocation-order-guarantee
+   * in respect to `persistAsync` or `persist` calls. That is, if `persistAsync` or `persist` was invoked before `defer`,
+   * the corresponding handlers will be invoked in the same order as they were registered in.
+   *
+   * This call will NOT result in `event` being persisted, use `persist` or `persistAsync` instead
+   * if the given event should possible to replay.
+   *
+   * If there are no pending persist handler calls, the handler will be called immediately.
+   *
+   * If persistence of an earlier event fails, the persistent actor will stop, and the `handler`
+   * will not be run.
+   *
+   * @param event event to be handled in the future, when preceding persist operations have been processes
+   * @param handler handler for the given `event`
+   */
+  def defer[A](event: A)(handler: Procedure[A]): Unit = {
+    internalDefer(event)(event ⇒ handler(event))
+  }
 
 }
 

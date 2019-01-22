@@ -1,13 +1,16 @@
-/**
- * Copyright (C) 2017-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2017-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.actor.typed
 package scaladsl
 
 import akka.Done
-import akka.testkit.typed.scaladsl.{ ActorTestKit, TestProbe }
+import akka.actor.testkit.typed.scaladsl.ScalaTestWithActorTestKit
+import akka.actor.testkit.typed.scaladsl.TestProbe
+import org.scalatest.WordSpecLike
 
-final class OnSignalSpec extends ActorTestKit with TypedAkkaSpecWithShutdown {
+final class OnSignalSpec extends ScalaTestWithActorTestKit with WordSpecLike {
 
   "An Actor.OnSignal behavior" must {
     "must correctly install the signal handler" in {
@@ -16,7 +19,7 @@ final class OnSignalSpec extends ActorTestKit with TypedAkkaSpecWithShutdown {
         Behaviors.setup[Nothing] { context ⇒
           val stoppedChild = context.spawn(Behaviors.stopped, "stopped-child")
           context.watch(stoppedChild)
-          Behaviors.onSignal[Nothing] {
+          Behaviors.receiveSignal[Nothing] {
             case (_, Terminated(`stoppedChild`)) ⇒
               probe.ref ! Done
               Behaviors.stopped

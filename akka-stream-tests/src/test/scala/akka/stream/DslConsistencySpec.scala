@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2014-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2014-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.stream
 
 import java.lang.reflect.Method
@@ -36,10 +37,12 @@ class DslConsistencySpec extends WordSpec with Matchers {
   val ignore: Set[String] =
     Set("equals", "hashCode", "notify", "notifyAll", "wait", "toString", "getClass") ++
       Set("productArity", "canEqual", "productPrefix", "copy", "productIterator", "productElement") ++
+      Set("productElementName", "productElementNames") ++
       Set("create", "apply", "ops", "appendJava", "andThen", "andThenMat", "isIdentity", "withAttributes", "transformMaterializing") ++
       Set("asScala", "asJava", "deprecatedAndThen", "deprecatedAndThenMat")
 
-  val graphHelpers = Set("zipGraph", "zipWithGraph", "mergeGraph", "mergeSortedGraph", "interleaveGraph", "concatGraph", "prependGraph", "alsoToGraph", "wireTapGraph", "orElseGraph", "divertToGraph")
+  val graphHelpers = Set("zipGraph", "zipWithGraph", "zipLatestGraph", "zipLatestWithGraph", "mergeGraph", "mergeSortedGraph", "interleaveGraph", "concatGraph", "prependGraph", "alsoToGraph", "wireTapGraph", "orElseGraph", "divertToGraph")
+
   val allowMissing: Map[Class[_], Set[String]] = Map(
     jFlowClass → graphHelpers,
     jSourceClass → (graphHelpers ++ Set("watch", "ask")),

@@ -1,11 +1,10 @@
-/**
- * Copyright (C) 2009-2017 Lightbend Inc. <http://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka
 
 import akka.annotation.InternalApi
-
-import scala.annotation.varargs
 
 final class UnsupportedAkkaVersion private[akka] (msg: String) extends RuntimeException(msg)
 
@@ -34,7 +33,7 @@ object AkkaVersion {
       case VersionPattern(currentMajorStr, currentMinorStr, currentPatchStr, mOrRc) ⇒
         requiredVersion match {
           case requiredVersion @ VersionPattern(requiredMajorStr, requiredMinorStr, requiredPatchStr, _) ⇒
-            // a M or RC is basically inbetween versions, so offset
+            // a M or RC is basically in-between versions, so offset
             val currentPatch =
               if (mOrRc ne null) currentPatchStr.toInt - 1
               else currentPatchStr.toInt

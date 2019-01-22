@@ -1,11 +1,13 @@
-/**
- * Copyright (C) 2016-2018 Lightbend Inc. <http://www.lightbend.com/>
+/*
+ * Copyright (C) 2016-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.actor.typed
 package scaladsl
 
-import akka.actor.typed.Behavior.UntypedBehavior
-import akka.actor.typed.internal.adapter._
+import akka.actor.ExtendedActorSystem
+import akka.actor.typed.internal.adapter.{ PropsAdapter ⇒ _, _ }
+import akka.annotation.InternalApi
 
 /**
  * Scala API: Adapters between typed and untyped actors and actor systems.
@@ -37,21 +39,11 @@ package object adapter {
   implicit class UntypedActorSystemOps(val sys: akka.actor.ActorSystem) extends AnyVal {
 
     def spawnAnonymous[T](behavior: Behavior[T], props: Props = Props.empty): ActorRef[T] = {
-      behavior match {
-        case b: UntypedBehavior[_] ⇒
-          ActorRefAdapter(sys.actorOf(b.untypedProps))
-        case _ ⇒
-          ActorRefAdapter(sys.actorOf(PropsAdapter(Behavior.validateAsInitial(behavior), props)))
-      }
+      ActorRefAdapter(sys.actorOf(PropsAdapter(Behavior.validateAsInitial(behavior), props)))
     }
 
     def spawn[T](behavior: Behavior[T], name: String, props: Props = Props.empty): ActorRef[T] = {
-      behavior match {
-        case b: UntypedBehavior[_] ⇒
-          ActorRefAdapter(sys.actorOf(b.untypedProps, name))
-        case _ ⇒
-          ActorRefAdapter(sys.actorOf(PropsAdapter(Behavior.validateAsInitial(behavior), props), name))
-      }
+      ActorRefAdapter(sys.actorOf(PropsAdapter(Behavior.validateAsInitial(behavior), props), name))
     }
 
     def toTyped: ActorSystem[Nothing] = AdapterExtension(sys).adapter
@@ -62,6 +54,13 @@ package object adapter {
    */
   implicit class TypedActorSystemOps(val sys: ActorSystem[_]) extends AnyVal {
     def toUntyped: akka.actor.ActorSystem = ActorSystemAdapter.toUntyped(sys)
+
+    /**
+     * INTERNAL API
+     */
+    @InternalApi private[akka] def internalSystemActorOf[U](behavior: Behavior[U], name: String, props: Props): ActorRef[U] = {
+      toUntyped.asInstanceOf[ExtendedActorSystem].systemActorOf(PropsAdapter(behavior, props), name)
+    }
   }
 
   /**
@@ -89,6 +88,8 @@ package object adapter {
     def actorOf(props: akka.actor.Props, name: String): akka.actor.ActorRef =
       ActorContextAdapter.toUntyped(ctx).actorOf(props, name)
 
+    def toUntyped: akka.actor.ActorContext = ActorContextAdapter.toUntyped(ctx)
+
     // watch, unwatch and stop not needed here because of the implicit ActorRef conversion
   }
 
@@ -97,6 +98,19 @@ package object adapter {
    */
   implicit class TypedActorRefOps(val ref: ActorRef[_]) extends AnyVal {
     def toUntyped: akka.actor.ActorRef = ActorRefAdapter.toUntyped(ref)
+  }
+
+  /**
+   * Extension methods added to [[akka.actor.ActorRef]].
+   */
+  implicit class UntypedActorRefOps(val ref: akka.actor.ActorRef) extends AnyVal {
+
+    /**
+     * Adapt the untyped `ActorRef` to typed `ActorRef[T]`. There is also an
+     * automatic implicit conversion for this, but this more explicit variant might
+     * sometimes be preferred.
+     */
+    def toTyped[T]: ActorRef[T] = ActorRefAdapter(ref)
   }
 
   /**

@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2015-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2015-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.cluster.sharding
 
 import java.io.File
@@ -39,7 +40,7 @@ object RemoveInternalClusterShardingDataSpec {
     akka.persistence.snapshot-store.local.dir = "target/snapshots-RemoveInternalClusterShardingDataSpec"
     akka.cluster.sharding.snapshot-after = 5
     akka.cluster.sharding.state-store-mode = persistence
-    |akka.cluster.sharding.keep-nr-of-batches = 0
+    akka.cluster.sharding.keep-nr-of-batches = 0
     """
 
   val extractEntityId: ShardRegion.ExtractEntityId = {

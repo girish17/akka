@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2014-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2014-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.stream.scaladsl
 
 import java.util.concurrent.CompletionStage
@@ -16,14 +17,13 @@ import akka.stream.{ Outlet, SourceShape, _ }
 import akka.util.ConstantFun
 import akka.{ Done, NotUsed }
 import org.reactivestreams.{ Publisher, Subscriber }
-
 import scala.annotation.tailrec
 import scala.annotation.unchecked.uncheckedVariance
 import scala.collection.immutable
 import scala.concurrent.duration.FiniteDuration
 import scala.concurrent.{ Future, Promise }
-import akka.stream.stage.GraphStageWithMaterializedValue
 
+import akka.stream.stage.GraphStageWithMaterializedValue
 import scala.compat.java8.FutureConverters._
 
 /**
@@ -131,7 +131,7 @@ final class Source[+Out, +Mat](
    * if there is a failure signaled in the stream.
    *
    * If the stream is empty (i.e. completes before signalling any elements),
-   * the reduce stage will fail its downstream with a [[NoSuchElementException]],
+   * the reduce operator will fail its downstream with a [[NoSuchElementException]],
    * which is semantically in-line with that Scala's standard library collections
    * do in such situations.
    */
@@ -194,7 +194,7 @@ final class Source[+Out, +Mat](
   /**
    * Converts this Scala DSL element to it's Java DSL counterpart.
    */
-  def asJava: javadsl.Source[Out, Mat] = new javadsl.Source(this)
+  def asJava[JOut >: Out, JMat >: Mat]: javadsl.Source[JOut, JMat] = new javadsl.Source(this)
 
   /**
    * Combines several sources with fan-in strategy like `Merge` or `Concat` and returns `Source`.
@@ -320,7 +320,7 @@ object Source {
   def fromFutureSource[T, M](future: Future[Graph[SourceShape[T], M]]): Source[T, Future[M]] = fromGraph(new FutureFlattenSource(future))
 
   /**
-   * Streams the elements of an asynchronous source once its given `completion` stage completes.
+   * Streams the elements of an asynchronous source once its given `completion` operator completes.
    * If the [[CompletionStage]] fails the stream is failed with the exception from the future.
    * If downstream cancels before the stream completes the materialized `Future` will be failed
    * with a [[StreamDetachedException]]
@@ -469,12 +469,17 @@ object Source {
    *
    * The stream can be completed successfully by sending the actor reference a message that is matched by
    * `completionMatcher` in which case already buffered elements will be signaled before signaling
-   * completion, or by sending [[akka.actor.PoisonPill]] in which case completion will be signaled immediately.
+   * completion.
    *
    * The stream can be completed with failure by sending a message that is matched by `failureMatcher`. The extracted
    * [[Throwable]] will be used to fail the stream. In case the Actor is still draining its internal buffer (after having received
    * a message matched by `completionMatcher`) before signaling completion and it receives a message matched by `failureMatcher`,
    * the failure will be signaled downstream immediately (instead of the completion signal).
+   *
+   * Note that terminating the actor without first completing it, either with a success or a
+   * failure, will prevent the actor triggering downstream completion and the stream will continue
+   * to run even though the source actor is dead. Therefore you should **not** attempt to
+   * manually terminate the actor such as with a [[akka.actor.PoisonPill]].
    *
    * The actor will be stopped when the stream is completed, failed or canceled from downstream,
    * i.e. you can watch it to get notified when that happens.
@@ -489,7 +494,7 @@ object Source {
     failureMatcher:    PartialFunction[Any, Throwable],
     bufferSize:        Int, overflowStrategy: OverflowStrategy): Source[T, ActorRef] = {
     require(bufferSize >= 0, "bufferSize must be greater than or equal to 0")
-    require(overflowStrategy != OverflowStrategies.Backpressure, "Backpressure overflowStrategy not supported")
+    require(!overflowStrategy.isBackpressure, "Backpressure overflowStrategy not supported")
     fromGraph(new ActorRefSource(completionMatcher, failureMatcher, bufferSize, overflowStrategy, DefaultAttributes.actorRefSource, shape("ActorRefSource")))
   }
 
@@ -528,7 +533,10 @@ object Source {
    */
   def actorRef[T](bufferSize: Int, overflowStrategy: OverflowStrategy): Source[T, ActorRef] =
     actorRef(
-      { case akka.actor.Status.Success(_) ⇒ },
+      {
+        case akka.actor.Status.Success    ⇒
+        case akka.actor.Status.Success(_) ⇒
+      },
       { case akka.actor.Status.Failure(cause) ⇒ cause },
       bufferSize, overflowStrategy)
 
@@ -601,7 +609,7 @@ object Source {
    * call when buffer is full.
    *
    * You can watch accessibility of stream with [[akka.stream.scaladsl.SourceQueue.watchCompletion]].
-   * It returns future that completes with success when stream is completed or fail when stream is failed.
+   * It returns future that completes with success when the operator is completed or fails when the stream is failed.
    *
    * The buffer can be disabled by using `bufferSize` of 0 and then received message will wait
    * for downstream demand unless there is another message waiting for downstream demand, in that case
@@ -631,7 +639,7 @@ object Source {
    * `Restart` supervision strategy will close and create blocking IO again. Default strategy is `Stop` which means
    * that stream will be terminated on error in `read` function by default.
    *
-   * You can configure the default dispatcher for this Source by changing the `akka.stream.blocking-io-dispatcher` or
+   * You can configure the default dispatcher for this Source by changing the `akka.stream.materializer.blocking-io-dispatcher` or
    * set it for a given Source by using [[ActorAttributes]].
    *
    * Adheres to the [[ActorAttributes.SupervisionStrategy]] attribute.
@@ -654,7 +662,7 @@ object Source {
    * `Restart` supervision strategy will close and create resource. Default strategy is `Stop` which means
    * that stream will be terminated on error in `read` function (or future) by default.
    *
-   * You can configure the default dispatcher for this Source by changing the `akka.stream.blocking-io-dispatcher` or
+   * You can configure the default dispatcher for this Source by changing the `akka.stream.materializer.blocking-io-dispatcher` or
    * set it for a given Source by using [[ActorAttributes]].
    *
    * Adheres to the [[ActorAttributes.SupervisionStrategy]] attribute.

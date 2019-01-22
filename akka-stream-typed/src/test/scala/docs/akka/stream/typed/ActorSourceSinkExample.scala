@@ -1,15 +1,18 @@
-/**
- * Copyright (C) 2018 Lightbend Inc. <https://www.lightbend.com/>
+/*
+ * Copyright (C) 2018-2019 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package docs.akka.stream.typed
 
 import akka.NotUsed
-import akka.stream.ActorMaterializer
+import akka.actor.typed.ActorSystem
+import akka.stream.typed.scaladsl.ActorMaterializer
 
 object ActorSourceSinkExample {
 
-  implicit val mat: ActorMaterializer = ???
+  val system: ActorSystem[_] = ???
+
+  implicit val mat: ActorMaterializer = ActorMaterializer()(system)
 
   {
     // #actor-source-ref

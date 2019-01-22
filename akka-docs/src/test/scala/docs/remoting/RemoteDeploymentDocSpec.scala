@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package docs.remoting
 
 import akka.actor.{ ExtendedActorSystem, ActorSystem, Actor, ActorRef }
@@ -30,7 +31,7 @@ class RemoteDeploymentDocSpec extends AkkaSpec("""
   val other = ActorSystem("remote", system.settings.config)
   val address = other.asInstanceOf[ExtendedActorSystem].provider.getExternalAddressFor(Address("akka.tcp", "s", "host", 1)).get
 
-  override def afterTermination() { shutdown(other) }
+  override def afterTermination(): Unit = { shutdown(other) }
 
   "demonstrate programmatic deployment" in {
     //#deploy

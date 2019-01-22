@@ -1,14 +1,14 @@
-/**
- * Copyright (C) 2017-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2017-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.actor.typed.scaladsl
 
 import akka.actor.typed._
 import akka.annotation.{ ApiMayChange, DoNotInherit }
-import akka.event.LoggingAdapter
 import akka.util.Timeout
 
-import scala.concurrent.ExecutionContextExecutor
+import scala.concurrent.{ ExecutionContextExecutor, Future }
 import scala.concurrent.duration.FiniteDuration
 import scala.reflect.ClassTag
 import scala.util.Try
@@ -36,7 +36,7 @@ import akka.annotation.InternalApi
  */
 @DoNotInherit
 @ApiMayChange
-trait ActorContext[T] { this: akka.actor.typed.javadsl.ActorContext[T] ⇒
+trait ActorContext[T] extends TypedActorContext[T] { this: akka.actor.typed.javadsl.ActorContext[T] ⇒
 
   /**
    * Get the `javadsl` of this `ActorContext`.
@@ -161,13 +161,13 @@ trait ActorContext[T] { this: akka.actor.typed.javadsl.ActorContext[T] ⇒
   /**
    * Schedule the sending of a notification in case no other
    * message is received during the given period of time. The timeout starts anew
-   * with each received message. Provide `Duration.Undefined` to switch off this
+   * with each received message. Use `cancelReceiveTimeout` to switch off this
    * mechanism.
    *
    * *Warning*: This method is not thread-safe and must not be accessed from threads other
    * than the ordinary actor message processing thread, such as [[scala.concurrent.Future]] callbacks.
    */
-  def setReceiveTimeout(d: FiniteDuration, msg: T): Unit
+  def setReceiveTimeout(timeout: FiniteDuration, msg: T): Unit
 
   /**
    * Cancel the sending of receive timeout notifications.
@@ -186,11 +186,11 @@ trait ActorContext[T] { this: akka.actor.typed.javadsl.ActorContext[T] ⇒
    * This method is thread-safe and can be called from other threads than the ordinary
    * actor message processing thread, such as [[scala.concurrent.Future]] callbacks.
    */
-  def schedule[U](delay: FiniteDuration, target: ActorRef[U], msg: U): akka.actor.Cancellable
+  def scheduleOnce[U](delay: FiniteDuration, target: ActorRef[U], msg: U): akka.actor.Cancellable
 
   /**
    * This Actor’s execution context. It can be used to run asynchronous tasks
-   * like [[scala.concurrent.Future]] combinators.
+   * like [[scala.concurrent.Future]] operators.
    *
    * This field is thread-safe and can be called from other threads than the ordinary
    * actor message processing thread, such as [[scala.concurrent.Future]] callbacks.
@@ -238,7 +238,7 @@ trait ActorContext[T] { this: akka.actor.typed.javadsl.ActorContext[T] ⇒
    *
    * A message adapter (and the returned `ActorRef`) has the same lifecycle as
    * this actor. It's recommended to register the adapters in a top level
-   * `Behaviors.deferred` or constructor of `MutableBehavior` but it's possible to
+   * `Behaviors.setup` or constructor of `AbstractBehavior` but it's possible to
    * register them later also if needed. Message adapters don't have to be stopped since
    * they consume no resources other than an entry in an internal `Map` and the number
    * of adapters are bounded since it's only possible to have one per message class.
@@ -265,7 +265,7 @@ trait ActorContext[T] { this: akka.actor.typed.javadsl.ActorContext[T] ⇒
    *
    * @param createRequest A function that creates a message for the other actor, containing the provided `ActorRef[Res]` that
    *                      the other actor can send a message back through.
-   * @param mapResponse Transforms the response from the `otherActor` into a message this actor understands.
+   * @param mapResponse Transforms the response from the `target` into a message this actor understands.
    *                              Should be a pure function but is executed inside the actor when the response arrives
    *                              so can safely touch the actor internals. If this function throws an exception it is
    *                              just as if the normal message receiving logic would throw.
@@ -273,7 +273,15 @@ trait ActorContext[T] { this: akka.actor.typed.javadsl.ActorContext[T] ⇒
    * @tparam Req The request protocol, what the other actor accepts
    * @tparam Res The response protocol, what the other actor sends back
    */
-  def ask[Req, Res](
-    otherActor: ActorRef[Req])(createRequest: ActorRef[Res] ⇒ Req)(mapResponse: Try[Res] ⇒ T)(implicit responseTimeout: Timeout, classTag: ClassTag[Res]): Unit
+  def ask[Req, Res](target: RecipientRef[Req])(createRequest: ActorRef[Res] ⇒ Req)(mapResponse: Try[Res] ⇒ T)(implicit responseTimeout: Timeout, classTag: ClassTag[Res]): Unit
+
+  /**
+   * Sends the result of the given `Future` to this Actor (“`self`”), after adapted it with
+   * the given function.
+   *
+   * This method is thread-safe and can be called from other threads than the ordinary
+   * actor message processing thread, such as [[scala.concurrent.Future]] callbacks.
+   */
+  def pipeToSelf[Value](future: Future[Value])(mapResult: Try[Value] ⇒ T): Unit
 
 }

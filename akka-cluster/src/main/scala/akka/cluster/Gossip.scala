@@ -1,10 +1,10 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.cluster
 
-import scala.collection.{ SortedSet, immutable }
+import scala.collection.immutable
 import ClusterSettings.DataCenter
 import MemberStatus._
 import akka.annotation.InternalApi
@@ -87,7 +87,7 @@ private[cluster] final case class Gossip(
   }
 
   @transient private lazy val membersMap: Map[UniqueAddress, Member] =
-    members.map(m ⇒ m.uniqueAddress → m)(collection.breakOut)
+    members.iterator.map(m ⇒ m.uniqueAddress → m).toMap
 
   @transient lazy val isMultiDc =
     if (members.size <= 1) false
@@ -209,7 +209,7 @@ private[cluster] final case class Gossip(
   }
 
   def update(updatedMembers: immutable.SortedSet[Member]): Gossip = {
-    copy(members = updatedMembers union members)
+    copy(members = updatedMembers union (members diff updatedMembers))
   }
 
   /**

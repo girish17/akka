@@ -1,13 +1,14 @@
-/**
- * Copyright (C) 2015-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2015-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.stream.scaladsl
 
 import scala.concurrent.duration._
 import akka.actor.{ Actor, ActorRef, Props, Status }
 import akka.stream.ActorMaterializer
 import akka.stream.Attributes.inputBuffer
-import akka.stream.testkit.Utils._
+import akka.stream.testkit.scaladsl.StreamTestKit._
 import akka.stream.testkit._
 import akka.stream.testkit.scaladsl._
 import akka.testkit.TestProbe

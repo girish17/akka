@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.actor.dispatch
 
 import scala.collection.JavaConverters.mapAsJavaMapConverter
@@ -162,7 +163,7 @@ class DispatchersSpec extends AkkaSpec(DispatchersSpec.config) with ImplicitSend
     }
 
     "get the correct types of dispatchers" in {
-      //All created/obtained dispatchers are of the expeced type/instance
+      //All created/obtained dispatchers are of the expected type/instance
       assert(typesAndValidators.forall(tuple ⇒ tuple._2(allDispatchers(tuple._1))))
     }
 

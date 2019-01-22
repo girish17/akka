@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2014-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2014-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.stream.scaladsl
 
 import akka.{ Done, NotUsed }
@@ -16,10 +17,11 @@ import akka.stream.{ javadsl, _ }
 import org.reactivestreams.{ Publisher, Subscriber }
 
 import scala.annotation.tailrec
-import scala.collection.generic.CanBuildFrom
 import scala.collection.immutable
 import scala.concurrent.{ ExecutionContext, Future }
 import scala.util.{ Failure, Success, Try }
+import scala.collection.immutable
+import akka.util.ccompat._
 
 /**
  * A `Sink` is a set of stream processing steps that has one open input.
@@ -39,7 +41,7 @@ final class Sink[-In, +Mat](
    *
    * '''Backpressures when''' original [[Sink]] backpressures
    *
-   * '''Cancels when''' original [[Sink]] backpressures
+   * '''Cancels when''' original [[Sink]] cancels
    */
   def contramap[In2](f: In2 ⇒ In): Sink[In2, Mat] = Flow.fromFunction(f).toMat(this)(Keep.right)
 
@@ -57,6 +59,17 @@ final class Sink[-In, +Mat](
     new Sink(
       traversalBuilder.transformMat(f.asInstanceOf[Any ⇒ Any]),
       shape)
+
+  /**
+   * Materializes this Sink, immediately returning (1) its materialized value, and (2) a new Sink
+   * that can be consume elements 'into' the pre-materialized one.
+   *
+   * Useful for when you need a materialized value of a Sink when handing it out to someone to materialize it for you.
+   */
+  def preMaterialize()(implicit materializer: Materializer): (Mat, Sink[In, NotUsed]) = {
+    val (sub, mat) = Source.asSubscriber.toMat(this)(Keep.both).run()
+    (mat, Sink.fromSubscriber(sub))
+  }
 
   /**
    * Replace the attributes of this [[Sink]] with the given ones. If this Sink is a composite
@@ -107,7 +120,7 @@ final class Sink[-In, +Mat](
   /**
    * Converts this Scala DSL element to it's Java DSL counterpart.
    */
-  def asJava: javadsl.Sink[In, Mat] = new javadsl.Sink(this)
+  def asJava[JIn <: In, JMat >: Mat]: javadsl.Sink[JIn, JMat] = new javadsl.Sink(this)
 }
 
 object Sink {
@@ -176,19 +189,38 @@ object Sink {
    * If the stream completes before signaling at least a single element, the Future will be failed with a [[NoSuchElementException]].
    * If the stream signals an error, the Future will be failed with the stream's exception.
    *
-   * See also [[lastOption]].
+   * See also [[lastOption]], [[takeLast]].
    */
-  def last[T]: Sink[T, Future[T]] = Sink.fromGraph(new LastOptionStage[T]).withAttributes(DefaultAttributes.lastSink)
-    .mapMaterializedValue(e ⇒ e.map(_.getOrElse(throw new NoSuchElementException("last of empty stream")))(ExecutionContexts.sameThreadExecutionContext))
+  def last[T]: Sink[T, Future[T]] = {
+    Sink.fromGraph(new TakeLastStage[T](1)).withAttributes(DefaultAttributes.lastSink)
+      .mapMaterializedValue { e ⇒
+        e.map(_.headOption.getOrElse(throw new NoSuchElementException("last of empty stream")))(ExecutionContexts.sameThreadExecutionContext)
+      }
+  }
 
   /**
    * A `Sink` that materializes into a `Future` of the optional last value received.
    * If the stream completes before signaling at least a single element, the value of the Future will be [[None]].
    * If the stream signals an error, the Future will be failed with the stream's exception.
    *
-   * See also [[last]].
+   * See also [[last]], [[takeLast]].
    */
-  def lastOption[T]: Sink[T, Future[Option[T]]] = Sink.fromGraph(new LastOptionStage[T]).withAttributes(DefaultAttributes.lastOptionSink)
+  def lastOption[T]: Sink[T, Future[Option[T]]] = {
+    Sink.fromGraph(new TakeLastStage[T](1)).withAttributes(DefaultAttributes.lastOptionSink)
+      .mapMaterializedValue { e ⇒
+        e.map(_.headOption)(ExecutionContexts.sameThreadExecutionContext)
+      }
+  }
+
+  /**
+   * A `Sink` that materializes into a a `Future` of `immutable.Seq[T]` containing the last `n` collected elements.
+   *
+   * If the stream completes before signaling at least n elements, the `Future` will complete with all elements seen so far.
+   * If the stream never completes, the `Future` will never complete.
+   * If there is a failure signaled in the stream the `Future` will be completed with failure.
+   */
+  def takeLast[T](n: Int): Sink[T, Future[immutable.Seq[T]]] =
+    Sink.fromGraph(new TakeLastStage[T](n)).withAttributes(DefaultAttributes.takeLastSink)
 
   /**
    * A `Sink` that keeps on collecting incoming elements until upstream terminates.
@@ -208,19 +240,19 @@ object Sink {
    * may be used to ensure boundedness.
    * Materializes into a `Future` of `That[T]` containing all the collected elements.
    * `That[T]` is limited to the limitations of the CanBuildFrom associated with it. For example, `Seq` is limited to
-   * `Int.MaxValue` elements. See [The Architecture of Scala Collectionss](https://docs.scala-lang.org/overviews/core/architecture-of-scala-collections.html) for more info.
+   * `Int.MaxValue` elements. See [The Architecture of Scala 2.13's Collections](https://docs.scala-lang.org/overviews/core/architecture-of-scala-213-collections.html) for more info.
    * This Sink will cancel the stream after having received that many elements.
    *
    * See also [[Flow.limit]], [[Flow.limitWeighted]], [[Flow.take]], [[Flow.takeWithin]], [[Flow.takeWhile]]
    */
-  def collection[T, That](implicit cbf: CanBuildFrom[Nothing, T, That with immutable.Traversable[_]]): Sink[T, Future[That]] =
+  def collection[T, That](implicit cbf: Factory[T, That with immutable.Iterable[_]]): Sink[T, Future[That]] =
     Sink.fromGraph(new SeqStage[T, That])
 
   /**
    * A `Sink` that materializes into a [[org.reactivestreams.Publisher]].
    *
    * If `fanout` is `true`, the materialized `Publisher` will support multiple `Subscriber`s and
-   * the size of the `inputBuffer` configured for this stage becomes the maximum number of elements that
+   * the size of the `inputBuffer` configured for this operator becomes the maximum number of elements that
    * the fastest [[org.reactivestreams.Subscriber]] can be ahead of the slowest one before slowing
    * the processing down due to back pressure.
    *
@@ -239,12 +271,21 @@ object Sink {
 
   /**
    * A `Sink` that will invoke the given procedure for each received element. The sink is materialized
-   * into a [[scala.concurrent.Future]] will be completed with `Success` when reaching the
+   * into a [[scala.concurrent.Future]] which will be completed with `Success` when reaching the
    * normal end of the stream, or completed with `Failure` if there is a failure signaled in
-   * the stream..
+   * the stream.
    */
   def foreach[T](f: T ⇒ Unit): Sink[T, Future[Done]] =
     Flow[T].map(f).toMat(Sink.ignore)(Keep.right).named("foreachSink")
+
+  /**
+   * A `Sink` that will invoke the given procedure asynchronously for each received element. The sink is materialized
+   * into a [[scala.concurrent.Future]] which will be completed with `Success` when reaching the
+   * normal end of the stream, or completed with `Failure` if there is a failure signaled in
+   * the stream.
+   */
+  def foreachAsync[T](parallelism: Int)(f: T ⇒ Future[Unit]): Sink[T, Future[Done]] =
+    Flow[T].mapAsyncUnordered(parallelism)(f).toMat(Sink.ignore)(Keep.right).named("foreachAsyncSink")
 
   /**
    * Combine several sinks with fan-out strategy like `Broadcast` or `Balance` and returns `Sink`.
@@ -279,6 +320,7 @@ object Sink {
    *
    * See also [[Flow.mapAsyncUnordered]]
    */
+  @deprecated("Use `foreachAsync` instead, it allows you to choose how to run the procedure, by calling some other API returning a Future or spawning a new Future.", since = "2.5.17")
   def foreachParallel[T](parallelism: Int)(f: T ⇒ Unit)(implicit ec: ExecutionContext): Sink[T, Future[Done]] =
     Flow[T].mapAsyncUnordered(parallelism)(t ⇒ Future(f(t))).toMat(Sink.ignore)(Keep.right)
 
@@ -313,7 +355,7 @@ object Sink {
    * if there is a failure signaled in the stream.
    *
    * If the stream is empty (i.e. completes before signalling any elements),
-   * the reduce stage will fail its downstream with a [[NoSuchElementException]],
+   * the reduce operator will fail its downstream with a [[NoSuchElementException]],
    * which is semantically in-line with that Scala's standard library collections
    * do in such situations.
    *
@@ -384,7 +426,7 @@ object Sink {
    * i.e. if the actor is not consuming the messages fast enough the mailbox
    * of the actor will grow. For potentially slow consumer actors it is recommended
    * to use a bounded mailbox with zero `mailbox-push-timeout-time` or use a rate
-   * limiting stage in front of this `Sink`.
+   * limiting operator in front of this `Sink`.
    */
   @InternalApi private[akka] def actorRef[T](ref: ActorRef, onCompleteMessage: Any, onFailureMessage: Throwable ⇒ Any): Sink[T, NotUsed] =
     fromGraph(new ActorRefSink(ref, onCompleteMessage, onFailureMessage,
@@ -403,7 +445,7 @@ object Sink {
    * i.e. if the actor is not consuming the messages fast enough the mailbox
    * of the actor will grow. For potentially slow consumer actors it is recommended
    * to use a bounded mailbox with zero `mailbox-push-timeout-time` or use a rate
-   * limiting stage in front of this `Sink`.
+   * limiting operator in front of this `Sink`.
    */
   def actorRef[T](ref: ActorRef, onCompleteMessage: Any): Sink[T, NotUsed] =
     fromGraph(new ActorRefSink(ref, onCompleteMessage, t ⇒ Status.Failure(t),
@@ -489,15 +531,26 @@ object Sink {
    * Creates a real `Sink` upon receiving the first element. Internal `Sink` will not be created if there are no elements,
    * because of completion or error.
    *
-   * If `sinkFactory` throws an exception and the supervision decision is
-   * [[akka.stream.Supervision.Stop]] the `Future` will be completed with failure. For all other supervision options it will
-   * try to create sink with next element
-   *
-   * `fallback` will be executed when there was no elements and completed is received from upstream.
-   *
-   * Adheres to the [[ActorAttributes.SupervisionStrategy]] attribute.
+   * If upstream completes before an element was received then the `Future` is completed with the value created by fallback.
+   * If upstream fails before an element was received, `sinkFactory` throws an exception, or materialization of the internal
+   * sink fails then the `Future` is completed with the exception.
+   * Otherwise the `Future` is completed with the materialized value of the internal sink.
    */
+  @Deprecated
+  @deprecated("Use lazyInitAsync instead. (lazyInitAsync no more needs a fallback function and the materialized value more clearly indicates if the internal sink was materialized or not.)", "2.5.11")
   def lazyInit[T, M](sinkFactory: T ⇒ Future[Sink[T, M]], fallback: () ⇒ M): Sink[T, Future[M]] =
-    Sink.fromGraph(new LazySink(sinkFactory, fallback))
+    Sink.fromGraph(new LazySink[T, M](sinkFactory)).mapMaterializedValue(_.map(_.getOrElse(fallback()))(ExecutionContexts.sameThreadExecutionContext))
+
+  /**
+   * Creates a real `Sink` upon receiving the first element. Internal `Sink` will not be created if there are no elements,
+   * because of completion or error.
+   *
+   * If upstream completes before an element was received then the `Future` is completed with `None`.
+   * If upstream fails before an element was received, `sinkFactory` throws an exception, or materialization of the internal
+   * sink fails then the `Future` is completed with the exception.
+   * Otherwise the `Future` is completed with the materialized value of the internal sink.
+   */
+  def lazyInitAsync[T, M](sinkFactory: () ⇒ Future[Sink[T, M]]): Sink[T, Future[Option[M]]] =
+    Sink.fromGraph(new LazySink[T, M](_ ⇒ sinkFactory()))
 
 }

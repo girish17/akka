@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2015-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2015-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.stream.impl
 
 import java.util.concurrent.{ TimeUnit, TimeoutException }
@@ -16,20 +17,26 @@ import scala.concurrent.duration.{ Duration, FiniteDuration }
 /**
  * INTERNAL API
  *
- * Various stages for controlling timeouts on IO related streams (although not necessarily).
+ * Various operators for controlling timeouts on IO related streams (although not necessarily).
  *
- * The common theme among the processing stages here that
+ * The common theme among the processing operators here that
  *  - they wait for certain event or events to happen
  *  - they have a timer that may fire before these events
- *  - if the timer fires before the event happens, these stages all fail the stream
+ *  - if the timer fires before the event happens, these operators all fail the stream
  *  - otherwise, these streams do not interfere with the element flow, ordinary completion or failure
  */
 @InternalApi private[akka] object Timers {
-  private def idleTimeoutCheckInterval(timeout: FiniteDuration): FiniteDuration = {
+
+  /**
+   * Given a timeout computes how often the check should be run without causing
+   * excessive load or losing timeout precision.
+   */
+  private[akka] def timeoutCheckInterval(timeout: FiniteDuration): FiniteDuration = {
     import scala.concurrent.duration._
-    FiniteDuration(
-      math.min(math.max(timeout.toNanos / 8, 100.millis.toNanos), timeout.toNanos / 2),
-      TimeUnit.NANOSECONDS)
+    if (timeout > 1.second) 1.second
+    else {
+      FiniteDuration(math.min(math.max(timeout.toNanos / 8, 100.millis.toNanos), timeout.toNanos / 2), TimeUnit.NANOSECONDS)
+    }
   }
 
   final class Initial[T](val timeout: FiniteDuration) extends SimpleLinearGraphStage[T] {
@@ -100,7 +107,7 @@ import scala.concurrent.duration.{ Duration, FiniteDuration }
           if (nextDeadline - System.nanoTime < 0)
             failStage(new TimeoutException(s"No elements passed in the last $timeout."))
 
-        override def preStart(): Unit = schedulePeriodically(GraphStageLogicTimer, idleTimeoutCheckInterval(timeout))
+        override def preStart(): Unit = schedulePeriodically(GraphStageLogicTimer, timeoutCheckInterval(timeout))
       }
 
     override def toString = "IdleTimeout"
@@ -132,7 +139,7 @@ import scala.concurrent.duration.{ Duration, FiniteDuration }
           if (waitingDemand && (nextDeadline - System.nanoTime < 0))
             failStage(new TimeoutException(s"No demand signalled in the last $timeout."))
 
-        override def preStart(): Unit = schedulePeriodically(GraphStageLogicTimer, idleTimeoutCheckInterval(timeout))
+        override def preStart(): Unit = schedulePeriodically(GraphStageLogicTimer, timeoutCheckInterval(timeout))
       }
 
     override def toString = "BackpressureTimeout"
@@ -160,13 +167,14 @@ import scala.concurrent.duration.{ Duration, FiniteDuration }
         if (nextDeadline - System.nanoTime < 0)
           failStage(new TimeoutException(s"No elements passed in the last $timeout."))
 
-      override def preStart(): Unit = schedulePeriodically(GraphStageLogicTimer, idleTimeoutCheckInterval(timeout))
+      override def preStart(): Unit = schedulePeriodically(GraphStageLogicTimer, timeoutCheckInterval(timeout))
 
       class IdleBidiHandler[P](in: Inlet[P], out: Outlet[P]) extends InHandler with OutHandler {
         override def onPush(): Unit = {
           onActivity()
           push(out, grab(in))
         }
+
         override def onPull(): Unit = pull(in)
         override def onUpstreamFinish(): Unit = complete(out)
         override def onDownstreamFinish(): Unit = cancel(in)

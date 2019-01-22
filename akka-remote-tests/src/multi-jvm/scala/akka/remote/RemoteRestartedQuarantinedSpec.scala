@@ -1,19 +1,15 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
-package akka.remote
 
-import akka.remote.transport.AssociationHandle
+package akka.remote
 
 import language.postfixOps
 import scala.concurrent.duration._
 import com.typesafe.config.ConfigFactory
 import akka.actor._
 import akka.remote.testconductor.RoleName
-import akka.remote.transport.ThrottlerTransportAdapter.{ ForceDisassociateExplicitly, ForceDisassociate, Direction }
 import akka.remote.testkit.MultiNodeConfig
-import akka.remote.testkit.MultiNodeSpec
-import akka.remote.testkit.STMultiNodeSpec
 import akka.testkit._
 import akka.actor.ActorIdentity
 import akka.remote.testconductor.RoleName
@@ -26,9 +22,6 @@ object RemoteRestartedQuarantinedSpec extends MultiNodeConfig {
 
   commonConfig(debugConfig(on = false).withFallback(
     ConfigFactory.parseString("""
-      akka.loglevel = DEBUG
-      akka.remote.log-remote-lifecycle-events = DEBUG
-
       # Keep it long, we don't want reconnects
       akka.remote.retry-gate-closed-for  = 1 s
 
@@ -133,7 +126,6 @@ abstract class RemoteRestartedQuarantinedSpec
         // retry because it's possible to loose the initial message here, see issue #17314
         val probe = TestProbe()(freshSystem)
         probe.awaitAssert({
-          println(s"# --") // FIXME
           freshSystem.actorSelection(RootActorPath(firstAddress) / "user" / "subject").tell(Identify("subject"), probe.ref)
           probe.expectMsgType[ActorIdentity](1.second).ref should not be (None)
         }, 30.seconds)

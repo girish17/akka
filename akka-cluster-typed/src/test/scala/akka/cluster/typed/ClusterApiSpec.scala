@@ -1,25 +1,23 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.cluster.typed
 
-import akka.actor.typed.TypedAkkaSpecWithShutdown
 import akka.actor.typed.scaladsl.adapter._
 import akka.cluster.ClusterEvent._
 import akka.cluster.MemberStatus
-import akka.testkit.typed.scaladsl.{ ActorTestKit, TestProbe }
-import akka.testkit.typed.TestKitSettings
+import akka.actor.testkit.typed.scaladsl.TestProbe
+import akka.actor.testkit.typed.TestKitSettings
+import akka.actor.testkit.typed.scaladsl.ActorTestKit
 import com.typesafe.config.ConfigFactory
-import org.scalatest.concurrent.ScalaFutures
-
-import scala.concurrent.Await
-import scala.concurrent.duration._
+import akka.actor.testkit.typed.scaladsl.ScalaTestWithActorTestKit
+import org.scalatest.WordSpecLike
 
 object ClusterApiSpec {
   val config = ConfigFactory.parseString(
     """
       akka.actor.provider = cluster
-      akka.remote.artery.enabled = true
       akka.remote.netty.tcp.port = 0
       akka.remote.artery.canonical.port = 0
       akka.remote.artery.canonical.hostname = 127.0.0.1
@@ -29,12 +27,14 @@ object ClusterApiSpec {
         serialize-messages = off
         allow-java-serialization = off
       }
+      # generous timeout for cluster forming probes
+      akka.actor.testkit.typed.default-timeout = 10s
+      # disable this or we cannot be sure to observe node end state on the leaving side
+      akka.cluster.run-coordinated-shutdown-when-down = off
     """)
 }
 
-class ClusterApiSpec extends ActorTestKit with TypedAkkaSpecWithShutdown with ScalaFutures {
-
-  override def config = ClusterApiSpec.config
+class ClusterApiSpec extends ScalaTestWithActorTestKit(ClusterApiSpec.config) with WordSpecLike {
 
   val testSettings = TestKitSettings(system)
   val clusterNode1 = Cluster(system)
@@ -50,8 +50,8 @@ class ClusterApiSpec extends ActorTestKit with TypedAkkaSpecWithShutdown with Sc
       try {
         val clusterNode2 = Cluster(adaptedSystem2)
 
-        val node1Probe = TestProbe[AnyRef]()(system)
-        val node2Probe = TestProbe[AnyRef]()(adaptedSystem2)
+        val node1Probe = TestProbe[ClusterDomainEvent]()(system)
+        val node2Probe = TestProbe[ClusterDomainEvent]()(adaptedSystem2)
 
         // initial cached selfMember
         clusterNode1.selfMember.status should ===(MemberStatus.Removed)
@@ -63,8 +63,7 @@ class ClusterApiSpec extends ActorTestKit with TypedAkkaSpecWithShutdown with Sc
         node1Probe.expectMessageType[MemberUp].member.uniqueAddress == clusterNode1.selfMember.uniqueAddress
 
         // check that cached selfMember is updated
-        node1Probe.awaitAssert(
-          clusterNode1.selfMember.status should ===(MemberStatus.Up))
+        node1Probe.awaitAssert(clusterNode1.selfMember.status should ===(MemberStatus.Up))
 
         // subscribing to OnSelfUp when already up
         clusterNode1.subscriptions ! Subscribe(node1Probe.ref, classOf[SelfUp])
@@ -73,8 +72,7 @@ class ClusterApiSpec extends ActorTestKit with TypedAkkaSpecWithShutdown with Sc
         // selfMember update and on up subscription on node 2 when joining
         clusterNode2.subscriptions ! Subscribe(node2Probe.ref, classOf[SelfUp])
         clusterNode2.manager ! Join(clusterNode1.selfMember.address)
-        node2Probe.awaitAssert(
-          clusterNode2.selfMember.status should ===(MemberStatus.Up))
+        node2Probe.awaitAssert(clusterNode2.selfMember.status should ===(MemberStatus.Up))
         node2Probe.expectMessageType[SelfUp]
 
         // events about node2 joining to subscriber on node1
@@ -91,8 +89,8 @@ class ClusterApiSpec extends ActorTestKit with TypedAkkaSpecWithShutdown with Sc
         node1Probe.expectMessageType[MemberRemoved].member.uniqueAddress == clusterNode2.selfMember.uniqueAddress
 
         // selfMember updated and self removed event gotten
-        node2Probe.awaitAssert(
-          clusterNode2.selfMember.status should ===(MemberStatus.Removed))
+        node2Probe.awaitAssert(clusterNode2.selfMember.status should ===(MemberStatus.Removed))
+
         node2Probe.expectMessage(SelfRemoved(MemberStatus.Exiting))
 
         // subscribing to SelfRemoved when already removed yields immediate message back
@@ -104,7 +102,7 @@ class ClusterApiSpec extends ActorTestKit with TypedAkkaSpecWithShutdown with Sc
         node2Probe.expectNoMessage()
 
       } finally {
-        Await.result(system2.terminate(), 3.seconds)
+        ActorTestKit.shutdown(adaptedSystem2)
       }
     }
   }

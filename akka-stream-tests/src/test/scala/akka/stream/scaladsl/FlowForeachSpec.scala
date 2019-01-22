@@ -1,12 +1,14 @@
-/**
- * Copyright (C) 2014-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2014-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.stream.scaladsl
 
 import scala.util.control.NoStackTrace
 import akka.stream.ActorMaterializer
 import akka.stream.testkit._
 import akka.stream.testkit.Utils._
+import akka.stream.testkit.scaladsl.StreamTestKit._
 import scala.concurrent.Await
 import scala.concurrent.duration._
 
@@ -15,7 +17,7 @@ class FlowForeachSpec extends StreamSpec {
   implicit val materializer = ActorMaterializer()
   import system.dispatcher
 
-  "A Foreach" must {
+  "A runForeach" must {
 
     "call the procedure for each element" in assertAllStagesStopped {
       Source(1 to 3).runForeach(testActor ! _) foreach {
@@ -47,7 +49,7 @@ class FlowForeachSpec extends StreamSpec {
     }
 
     "complete future with failure when function throws" in assertAllStagesStopped {
-      val error = new Exception with NoStackTrace
+      val error = TE("Boom!")
       val future = Source.single(1).runForeach(_ ⇒ throw error)
       the[Exception] thrownBy Await.result(future, 3.seconds) should be(error)
     }

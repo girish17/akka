@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.cluster.singleton
 
 import org.scalatest.{ BeforeAndAfterAll, Matchers, WordSpecLike }
@@ -54,7 +55,7 @@ object ClusterSingletonProxySpec {
       "user/singletonManager",
       settings = ClusterSingletonProxySettings(system)), s"singletonProxy-${cluster.selfAddress.port.getOrElse(0)}")
 
-    def testProxy(msg: String) {
+    def testProxy(msg: String): Unit = {
       val probe = TestProbe()
       probe.send(proxy, msg)
       // 25 seconds to make sure the singleton was started up

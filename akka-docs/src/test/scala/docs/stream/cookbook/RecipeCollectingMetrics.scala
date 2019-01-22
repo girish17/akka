@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2018-2019 Lightbend Inc. <https://www.lightbend.com>
+ */
+
 package docs.stream.cookbook
 
 import akka.stream.{ ActorMaterializerSettings, ActorMaterializer }
@@ -68,7 +72,7 @@ class RecipeCollectingMetrics extends RecipeSpec {
       //        the counter stream and store the final value, and also repeat this final value if no update is received between
       //      metrics collection rounds.
       //
-      //        To finish the recipe, we simply use :class:`ZipWith` to trigger reading the latest value from the ``currentLoad``
+      //        To finish the recipe, we use :class:`ZipWith` to trigger reading the latest value from the ``currentLoad``
       //        stream whenever a new ``Tick`` arrives on the stream of ticks, ``reportTicks``.
       //
       //        .. includecode:: ../code/docs/stream/cookbook/RecipeCollectingMetrics.scala#periodic-metrics-collection

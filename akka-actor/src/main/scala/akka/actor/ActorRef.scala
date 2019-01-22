@@ -1,5 +1,5 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.actor
@@ -10,7 +10,7 @@ import akka.dispatch.sysmsg._
 import java.lang.{ IllegalStateException, UnsupportedOperationException }
 
 import akka.serialization.{ JavaSerializer, Serialization }
-import akka.event.{ EventStream, Logging, LoggingAdapter, MarkerLoggingAdapter }
+import akka.event.{ EventStream, Logging, MarkerLoggingAdapter }
 
 import scala.annotation.tailrec
 import java.util.concurrent.ConcurrentHashMap
@@ -422,7 +422,7 @@ private[akka] final case class SerializedActorRef private (path: String) {
     case null ⇒
       throw new IllegalStateException(
         "Trying to deserialize a serialized ActorRef without an ActorSystem in scope." +
-          " Use 'akka.serialization.Serialization.currentSystem.withValue(system) { ... }'")
+          " Use 'akka.serialization.JavaSerializer.currentSystem.withValue(system) { ... }'")
     case someSystem ⇒
       someSystem.provider.resolveActorRef(path)
   }

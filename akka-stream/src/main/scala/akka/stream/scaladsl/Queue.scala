@@ -1,15 +1,12 @@
-/**
- * Copyright (C) 2015-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2015-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.stream.scaladsl
 
 import scala.concurrent.Future
 import akka.Done
-import akka.annotation.DoNotInherit
 import akka.stream.QueueOfferResult
-import akka.stream.stage.GraphStageLogic
-
-import scala.util.control.NoStackTrace
 
 /**
  * This trait allows to have the queue as a data source for some stream.
@@ -22,16 +19,22 @@ trait SourceQueue[T] {
    * - completes with `Dropped` when stream dropped offered element
    * - completes with `QueueClosed` when stream is completed during future is active
    * - completes with `Failure(f)` when failure to enqueue element from upstream
-   * - fails when stream is completed or you cannot call offer in this moment because of implementation rules
-   * (like for backpressure mode and full buffer you need to wait for last offer call Future completion)
+   * - fails when stream is completed
+   *
+   * Additionally when using the backpressure overflowStrategy:
+   * - If the buffer is full the Future won't be completed until there is space in the buffer
+   * - Calling offer before the Future is completed in this case will return a failed Future
    *
    * @param elem element to send to a stream
    */
   def offer(elem: T): Future[QueueOfferResult]
 
   /**
-   * Method returns a [[Future]] that will be completed if the stream completes,
-   * or will be failed when the stage faces an internal failure.
+   * Method returns a [[Future]] that will be completed if this operator
+   * completes, or will be failed when the operator faces an internal failure.
+   *
+   * Note that this only means the elements have been passed downstream, not
+   * that downstream has successfully processed them.
    */
   def watchCompletion(): Future[Done]
 }
@@ -43,6 +46,9 @@ trait SourceQueueWithComplete[T] extends SourceQueue[T] {
   /**
    * Complete the stream normally. Use `watchCompletion` to be notified of this
    * operation’s success.
+   *
+   * Note that this only means the elements have been passed downstream, not
+   * that downstream has successfully processed them.
    */
   def complete(): Unit
 
@@ -53,8 +59,12 @@ trait SourceQueueWithComplete[T] extends SourceQueue[T] {
   def fail(ex: Throwable): Unit
 
   /**
-   * Method returns a [[Future]] that will be completed if the stream completes,
-   * or will be failed when the stage faces an internal failure or the the [[SourceQueueWithComplete.fail]] method is invoked.
+   * Method returns a [[Future]] that will be completed if this operator
+   * completes, or will be failed when the stream fails,
+   * for example when [[SourceQueueWithComplete.fail]] is invoked.
+   *
+   * Note that this only means the elements have been passed downstream, not
+   * that downstream has successfully processed them.
    */
   def watchCompletion(): Future[Done]
 }

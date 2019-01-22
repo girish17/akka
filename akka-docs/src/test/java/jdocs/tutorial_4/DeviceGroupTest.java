@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package jdocs.tutorial_4;
 
 import java.util.stream.Stream;
@@ -34,7 +35,7 @@ public class DeviceGroupTest extends JUnitSuite {
     system = null;
   }
 
-  //#device-group-test-registration
+  // #device-group-test-registration
   @Test
   public void testRegisterDeviceActor() {
     TestKit probe = new TestKit(system);
@@ -62,11 +63,11 @@ public class DeviceGroupTest extends JUnitSuite {
     ActorRef groupActor = system.actorOf(DeviceGroup.props("group"));
 
     groupActor.tell(new DeviceManager.RequestTrackDevice("wrongGroup", "device1"), probe.getRef());
-    probe.expectNoMsg();
+    probe.expectNoMessage();
   }
-  //#device-group-test-registration
+  // #device-group-test-registration
 
-  //#device-group-test3
+  // #device-group-test3
   @Test
   public void testReturnSameActorForSameDeviceId() {
     TestKit probe = new TestKit(system);
@@ -81,9 +82,9 @@ public class DeviceGroupTest extends JUnitSuite {
     ActorRef deviceActor2 = probe.getLastSender();
     assertEquals(deviceActor1, deviceActor2);
   }
-  //#device-group-test3
+  // #device-group-test3
 
-  //#device-group-list-terminate-test
+  // #device-group-list-terminate-test
   @Test
   public void testListActiveDevices() {
     TestKit probe = new TestKit(system);
@@ -124,14 +125,14 @@ public class DeviceGroupTest extends JUnitSuite {
 
     // using awaitAssert to retry because it might take longer for the groupActor
     // to see the Terminated, that order is undefined
-    probe.awaitAssert(() -> {
-      groupActor.tell(new DeviceGroup.RequestDeviceList(1L), probe.getRef());
-      DeviceGroup.ReplyDeviceList r =
-        probe.expectMsgClass(DeviceGroup.ReplyDeviceList.class);
-      assertEquals(1L, r.requestId);
-      assertEquals(Stream.of("device2").collect(Collectors.toSet()), r.ids);
-      return null;
-    });
+    probe.awaitAssert(
+        () -> {
+          groupActor.tell(new DeviceGroup.RequestDeviceList(1L), probe.getRef());
+          DeviceGroup.ReplyDeviceList r = probe.expectMsgClass(DeviceGroup.ReplyDeviceList.class);
+          assertEquals(1L, r.requestId);
+          assertEquals(Stream.of("device2").collect(Collectors.toSet()), r.ids);
+          return null;
+        });
   }
-  //#device-group-list-terminate-test
+  // #device-group-list-terminate-test
 }

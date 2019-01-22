@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2014-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2014-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.contrib.circuitbreaker
 
 import akka.actor._
@@ -156,7 +157,7 @@ final class CircuitBreakerProxy(
         }
 
       case Event(message, state) ⇒
-        log.debug("CLOSED: Sending message {} expecting a response withing timeout {}", message, callTimeout)
+        log.debug("CLOSED: Sending message {} expecting a response within timeout {}", message, callTimeout)
         val currentSender = sender()
         forwardRequest(message, sender, state, log)
         stay

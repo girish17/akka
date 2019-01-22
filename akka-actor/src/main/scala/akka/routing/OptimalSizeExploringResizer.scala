@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.routing
 
 import java.time.LocalDateTime
@@ -193,7 +194,7 @@ case class DefaultOptimalSizeExploringResizer(
             cell.mailbox.numberOfMessages + (if (cell.currentMessage != null) 1 else 0)
           case cell ⇒ cell.numberOfMessages
         }
-      case x ⇒ 0
+      case _ ⇒ 0
     }
 
     val totalQueueLength = messagesInRoutees.sum

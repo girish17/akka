@@ -1,9 +1,9 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.remote
 
-import language.postfixOps
 import scala.concurrent.Await
 import scala.concurrent.duration._
 import com.typesafe.config.ConfigFactory
@@ -12,12 +12,9 @@ import akka.actor.ActorIdentity
 import akka.actor.ActorRef
 import akka.actor.Identify
 import akka.actor.Props
-import akka.actor.Terminated
 import akka.remote.testconductor.RoleName
 import akka.remote.transport.ThrottlerTransportAdapter.Direction
 import akka.remote.testkit.MultiNodeConfig
-import akka.remote.testkit.MultiNodeSpec
-import akka.remote.testkit.STMultiNodeSpec
 import akka.testkit._
 import akka.actor.ExtendedActorSystem
 import akka.actor.ActorSystem

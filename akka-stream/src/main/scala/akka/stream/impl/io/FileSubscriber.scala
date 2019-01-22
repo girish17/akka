@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2015-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2015-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.stream.impl.io
 
 import java.nio.channels.FileChannel
@@ -46,7 +47,7 @@ import scala.util.{ Failure, Success, Try }
     super.preStart()
   } catch {
     case ex: Exception ⇒
-      closeAndComplete(Success(IOResult(bytesWritten, Failure(ex))))
+      closeAndComplete(Failure(ex))
       cancel()
   }
 

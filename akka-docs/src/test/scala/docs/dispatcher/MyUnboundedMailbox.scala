@@ -1,5 +1,5 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package docs.dispatcher
@@ -28,7 +28,7 @@ object MyUnboundedMailbox {
     def dequeue(): Envelope = queue.poll()
     def numberOfMessages: Int = queue.size
     def hasMessages: Boolean = !queue.isEmpty
-    def cleanUp(owner: ActorRef, deadLetters: MessageQueue) {
+    def cleanUp(owner: ActorRef, deadLetters: MessageQueue): Unit = {
       while (hasMessages) {
         deadLetters.enqueue(owner, dequeue())
       }

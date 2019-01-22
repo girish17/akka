@@ -1,5 +1,5 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.contrib.throttle
@@ -35,7 +35,7 @@ class TimerBasedThrottlerSpec extends TestKit(ActorSystem("TimerBasedThrottlerSp
 
   import TimerBasedThrottlerSpec._
 
-  override def afterAll {
+  override def afterAll: Unit = {
     shutdown()
   }
 

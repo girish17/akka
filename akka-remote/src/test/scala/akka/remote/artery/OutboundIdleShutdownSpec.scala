@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2009-2017 Lightbend Inc. <http://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.remote.artery
 
 import scala.concurrent.duration._
@@ -103,9 +104,6 @@ class OutboundIdleShutdownSpec extends ArteryMultiNodeSpec(s"""
           assertStreamActive(association, Association.ControlQueueIndex, expected = false)
           assertStreamActive(association, Association.OrdinaryQueueIndex, expected = false)
         }
-
-        Thread.sleep(2000)
-        //        localArtery.quarantine(remoteAddress, Some(remoteUid), "Test")
 
         // the outbound streams are inactive and association quarantined, then it's completely removed
         eventually {

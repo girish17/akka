@@ -1,8 +1,12 @@
+/*
+ * Copyright (C) 2018-2019 Lightbend Inc. <https://www.lightbend.com>
+ */
+
 package jdocs.cluster;
 
 import java.io.Serializable;
 
-//#messages
+// #messages
 public interface StatsMessages {
 
   public static class StatsJob implements Serializable {
@@ -50,6 +54,5 @@ public interface StatsMessages {
       return "JobFailed(" + reason + ")";
     }
   }
-
 }
-//#messages
+// #messages

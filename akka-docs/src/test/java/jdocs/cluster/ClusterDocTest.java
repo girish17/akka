@@ -1,29 +1,38 @@
-/**
- * Copyright (C) 2015-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2015-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package jdocs.cluster;
 
 import akka.testkit.javadsl.TestKit;
 import com.typesafe.config.ConfigFactory;
+
+import java.util.LinkedList;
+import java.util.List;
 import java.util.Set;
 import jdocs.AbstractJavaTest;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
-import akka.actor.ActorSystem;
+// #join-seed-nodes-imports
+import akka.actor.Address;
 import akka.cluster.Cluster;
+
+// #join-seed-nodes-imports
+import akka.actor.ActorSystem;
 import akka.cluster.Member;
 
-
 public class ClusterDocTest extends AbstractJavaTest {
-  
+
   static ActorSystem system;
-  
+
   @BeforeClass
   public static void setup() {
-    system = ActorSystem.create("ClusterDocTest", 
-        ConfigFactory.parseString(scala.docs.cluster.ClusterDocSpec.config()));
+    system =
+        ActorSystem.create(
+            "ClusterDocTest",
+            ConfigFactory.parseString(scala.docs.cluster.ClusterDocSpec.config()));
   }
 
   @AfterClass
@@ -34,17 +43,17 @@ public class ClusterDocTest extends AbstractJavaTest {
 
   @Test
   public void demonstrateLeave() {
-    //#leave
+    // #leave
     final Cluster cluster = Cluster.get(system);
     cluster.leave(cluster.selfAddress());
-    //#leave
+    // #leave
 
   }
-  
-  // compile only 
+
+  // compile only
   @SuppressWarnings("unused")
   public void demonstrateDataCenter() {
-    //#dcAccess
+    // #dcAccess
     final Cluster cluster = Cluster.get(system);
     // this node's data center
     String dc = cluster.selfDataCenter();
@@ -53,7 +62,17 @@ public class ClusterDocTest extends AbstractJavaTest {
     // a specific member's data center
     Member aMember = cluster.state().getMembers().iterator().next();
     String aDc = aMember.dataCenter();
-    //#dcAccess
+    // #dcAccess
   }
 
+  // compile only
+  @SuppressWarnings("unused")
+  public void demonstrateJoinSeedNodes() {
+    // #join-seed-nodes
+    final Cluster cluster = Cluster.get(system);
+    List<Address> list =
+        new LinkedList<>(); // replace this with your method to dynamically get seed nodes
+    cluster.joinSeedNodes(list);
+    // #join-seed-nodes
+  }
 }

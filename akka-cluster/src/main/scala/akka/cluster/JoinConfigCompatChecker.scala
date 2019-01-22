@@ -1,12 +1,14 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.cluster
 
 import java.util
 
 import akka.actor.ExtendedActorSystem
 import akka.annotation.{ DoNotInherit, InternalApi }
+import akka.util.ccompat._
 import com.typesafe.config.{ Config, ConfigFactory, ConfigValue }
 
 import scala.collection.JavaConverters._
@@ -47,7 +49,7 @@ object JoinConfigCompatChecker {
       }
 
     if (result.isEmpty) Valid
-    else Invalid(result.to[im.Seq])
+    else Invalid(result.to(im.Seq))
   }
 
   /**
@@ -77,7 +79,7 @@ object JoinConfigCompatChecker {
           }
 
       if (incompatibleKeys.isEmpty) Valid
-      else Invalid(incompatibleKeys.to[im.Seq])
+      else Invalid(incompatibleKeys.to(im.Seq))
     }
 
     exists(requiredKeys, toCheck) ++ checkEquality
@@ -122,7 +124,7 @@ object JoinConfigCompatChecker {
    */
   @InternalApi
   private[cluster] def removeSensitiveKeys(config: Config, clusterSettings: ClusterSettings): im.Seq[String] = {
-    val existingKeys = config.entrySet().asScala.map(_.getKey).to[im.Seq]
+    val existingKeys = config.entrySet().asScala.map(_.getKey).to(im.Seq)
     removeSensitiveKeys(existingKeys, clusterSettings)
   }
 
@@ -144,7 +146,10 @@ object JoinConfigCompatChecker {
 
     // composite checker
     new JoinConfigCompatChecker {
-      override val requiredKeys: im.Seq[String] = checkers.flatMap(_.requiredKeys).to[im.Seq]
+      override val requiredKeys: im.Seq[String] = {
+        // Always include akka.version (used in join logging)
+        "akka.version" +: checkers.flatMap(_.requiredKeys).to(im.Seq)
+      }
       override def check(toValidate: Config, clusterConfig: Config): ConfigValidation =
         checkers.foldLeft(Valid: ConfigValidation) { (acc, checker) ⇒
           acc ++ checker.check(toValidate, clusterConfig)

@@ -1,5 +1,5 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package docs.persistence
@@ -103,7 +103,8 @@ object PersistenceDocSpec {
           childName = "myActor",
           minBackoff = 3.seconds,
           maxBackoff = 30.seconds,
-          randomFactor = 0.2))
+          randomFactor = 0.2,
+          maxNrOfRetries = -1))
       context.actorOf(props, name = "mySupervisor")
       //#backoff
     }
@@ -295,7 +296,7 @@ object PersistenceDocSpec {
           sender() ! c
           persist(s"evt-$c-1") { e ⇒ sender() ! e }
           persist(s"evt-$c-2") { e ⇒ sender() ! e }
-          deferAsync(s"evt-$c-3") { e ⇒ sender() ! e }
+          defer(s"evt-$c-3") { e ⇒ sender() ! e }
         }
       }
     }

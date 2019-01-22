@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.cluster
 
 import language.postfixOps
@@ -8,7 +9,6 @@ import scala.annotation.tailrec
 import scala.collection.immutable
 import scala.concurrent.duration._
 import java.util.concurrent.ThreadLocalRandom
-import java.util.concurrent.atomic.AtomicReference
 import org.scalatest.BeforeAndAfterEach
 import com.typesafe.config.Config
 import com.typesafe.config.ConfigFactory
@@ -80,7 +80,7 @@ private[cluster] object StressMultiJvmSpec extends MultiNodeConfig {
       nr-of-nodes-factor = 1
       # not scaled
       nr-of-seed-nodes = 3
-      nr-of-nodes-joining-to-seed-initally = 2
+      nr-of-nodes-joining-to-seed-initially = 2
       nr-of-nodes-joining-one-by-one-small = 2
       nr-of-nodes-joining-one-by-one-large = 2
       nr-of-nodes-joining-to-one = 2
@@ -174,7 +174,7 @@ private[cluster] object StressMultiJvmSpec extends MultiNodeConfig {
     val infolog = getBoolean("infolog")
     val nFactor = getInt("nr-of-nodes-factor")
     val numberOfSeedNodes = getInt("nr-of-seed-nodes") // not scaled by nodes factor
-    val numberOfNodesJoiningToSeedNodesInitially = getInt("nr-of-nodes-joining-to-seed-initally") * nFactor
+    val numberOfNodesJoiningToSeedNodesInitially = getInt("nr-of-nodes-joining-to-seed-initially") * nFactor
     val numberOfNodesJoiningOneByOneSmall = getInt("nr-of-nodes-joining-one-by-one-small") * nFactor
     val numberOfNodesJoiningOneByOneLarge = getInt("nr-of-nodes-joining-one-by-one-large") * nFactor
     val numberOfNodesJoiningToOneNode = getInt("nr-of-nodes-joining-to-one") * nFactor
@@ -256,8 +256,6 @@ private[cluster] object StressMultiJvmSpec extends MultiNodeConfig {
       immutable.SortedMap.empty[Address, CurrentInternalStats]
     }
 
-    import context.dispatcher
-
     def receive = {
       case PhiResult(from, phiValues) ⇒ phiValuesObservedByNode += from → phiValues
       case StatsResult(from, stats)   ⇒ clusterStatsObservedByNode += from → stats
@@ -289,7 +287,6 @@ private[cluster] object StressMultiJvmSpec extends MultiNodeConfig {
     def formatPhi: String = {
       if (phiValuesObservedByNode.isEmpty) ""
       else {
-        import akka.cluster.Member.addressOrdering
         val lines =
           for {
             (monitor, phiValues) ← phiValuesObservedByNode
@@ -348,7 +345,7 @@ private[cluster] object StressMultiJvmSpec extends MultiNodeConfig {
   class PhiObserver extends Actor with ActorLogging {
     val cluster = Cluster(context.system)
     var reportTo: Option[ActorRef] = None
-    val emptyPhiByNode = Map.empty[Address, PhiValue].withDefault(address ⇒ PhiValue(address, 0, 0, 0.0))
+    val emptyPhiByNode: Map[Address, PhiValue] = Map.empty[Address, PhiValue].withDefault(address ⇒ PhiValue(address, 0, 0, 0.0))
     var phiByNode = emptyPhiByNode
     var nodes = Set.empty[Address]
 
@@ -671,7 +668,6 @@ abstract class StressSpec
   }) with MultiNodeClusterSpec with BeforeAndAfterEach with ImplicitSender {
 
   import StressMultiJvmSpec._
-  import ClusterEvent._
 
   val settings = new Settings(system.settings.config)
   import settings._

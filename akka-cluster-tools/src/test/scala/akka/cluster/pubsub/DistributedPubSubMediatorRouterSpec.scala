@@ -1,5 +1,5 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.cluster.pubsub
@@ -29,7 +29,7 @@ object DistributedPubSubMediatorRouterSpec {
 }
 
 trait DistributedPubSubMediatorRouterSpec { this: WordSpecLike with TestKit with ImplicitSender ⇒
-  def nonUnwrappingPubSub(mediator: ActorRef, testActor: ActorRef, msg: Any) {
+  def nonUnwrappingPubSub(mediator: ActorRef, testActor: ActorRef, msg: Any): Unit = {
 
     val path = testActor.path.toStringWithoutAddress
 

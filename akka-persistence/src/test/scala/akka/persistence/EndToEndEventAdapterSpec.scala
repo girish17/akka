@@ -1,6 +1,7 @@
 /*
- * Copyright (C) 2015-2018 Lightbend Inc. <https://www.lightbend.com>
+ * Copyright (C) 2015-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.persistence
 
 import java.io.File
@@ -99,11 +100,11 @@ abstract class EndToEndEventAdapterSpec(journalName: String, journalConfig: Conf
   val storageLocations = List("akka.persistence.journal.leveldb.dir")
     .map(s ⇒ new File(journalConfig.getString(s)))
 
-  override protected def beforeAll() {
+  override protected def beforeAll(): Unit = {
     storageLocations.foreach(FileUtils.deleteDirectory)
   }
 
-  override protected def afterAll() {
+  override protected def afterAll(): Unit = {
     storageLocations.foreach(FileUtils.deleteDirectory)
   }
 

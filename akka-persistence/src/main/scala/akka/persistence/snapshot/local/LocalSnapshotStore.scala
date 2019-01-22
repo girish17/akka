@@ -1,6 +1,5 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
- * Copyright (C) 2012-2016 Eligotech BV.
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.persistence.snapshot.local
@@ -14,6 +13,7 @@ import akka.persistence.serialization._
 import akka.persistence.snapshot._
 import akka.serialization.SerializationExtension
 import akka.util.ByteString.UTF_8
+import akka.util.ccompat._
 import com.typesafe.config.Config
 
 import scala.collection.immutable
@@ -77,7 +77,7 @@ private[persistence] class LocalSnapshotStore(config: Config) extends SnapshotSt
     val metadatas = snapshotMetadatas(persistenceId, criteria)
     Future.sequence {
       metadatas.map(deleteAsync)
-    }(collection.breakOut, streamDispatcher).map(_ ⇒ ())(streamDispatcher)
+    }(scala.collection.immutable.IndexedSeq, streamDispatcher).map(_ ⇒ ())(streamDispatcher)
   }
 
   override def receivePluginInternal: Receive = {
@@ -116,8 +116,9 @@ private[persistence] class LocalSnapshotStore(config: Config) extends SnapshotSt
   protected def deserialize(inputStream: InputStream): Snapshot =
     serializationExtension.deserialize(streamToBytes(inputStream), classOf[Snapshot]).get
 
-  protected def serialize(outputStream: OutputStream, snapshot: Snapshot): Unit =
-    outputStream.write(serializationExtension.findSerializerFor(snapshot).toBinary(snapshot))
+  protected def serialize(outputStream: OutputStream, snapshot: Snapshot): Unit = {
+    outputStream.write(serializationExtension.serialize(snapshot).get)
+  }
 
   protected def withOutputStream(metadata: SnapshotMetadata)(p: (OutputStream) ⇒ Unit): File = {
     val tmpFile = snapshotFileForWrite(metadata, extension = "tmp")
@@ -131,7 +132,7 @@ private[persistence] class LocalSnapshotStore(config: Config) extends SnapshotSt
   private def withStream[A <: Closeable, B](stream: A, p: A ⇒ B): B =
     try { p(stream) } finally { stream.close() }
 
-  /** Only by persistenceId and sequenceNr, timestamp is informational - accomodates for 2.13.x series files */
+  /** Only by persistenceId and sequenceNr, timestamp is informational - accommodates for 2.13.x series files */
   protected def snapshotFileForWrite(metadata: SnapshotMetadata, extension: String = ""): File =
     new File(snapshotDir, s"snapshot-${URLEncoder.encode(metadata.persistenceId, UTF_8)}-${metadata.sequenceNr}-${metadata.timestamp}${extension}")
 
@@ -147,7 +148,7 @@ private[persistence] class LocalSnapshotStore(config: Config) extends SnapshotSt
     }
   }
 
-  override def preStart() {
+  override def preStart(): Unit = {
     snapshotDir()
     super.preStart()
   }

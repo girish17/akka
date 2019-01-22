@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2018-2019 Lightbend Inc. <https://www.lightbend.com>
+ */
+
 package docs.akka.cluster.typed
 
 import akka.testkit.SocketUtil
@@ -10,7 +14,7 @@ import akka.cluster.ClusterEvent._
 import akka.cluster.MemberStatus
 import akka.cluster.typed._
 //#cluster-imports
-import akka.testkit.typed.scaladsl.TestProbe
+import akka.actor.testkit.typed.scaladsl.TestProbe
 import org.scalatest.concurrent.{ Eventually, ScalaFutures }
 import org.scalatest.time.{ Millis, Seconds, Span }
 
@@ -43,13 +47,16 @@ akka {
   val configSystem2 = ConfigFactory.parseString(
     s"""
         akka.remote.netty.tcp.port = 0
+        akka.remote.artery.canonical.port = 0
      """
   ).withFallback(configSystem1)
 }
 
-class BasicClusterConfigSpec extends TypedAkkaSpec {
-
+class BasicClusterConfigSpec extends WordSpec with ScalaFutures with Eventually with Matchers {
   import BasicClusterExampleSpec._
+
+  implicit override val patienceConfig =
+    PatienceConfig(timeout = scaled(Span(10, Seconds)), interval = scaled(Span(100, Millis)))
 
   "Cluster API" must {
     "init cluster" in {
@@ -91,7 +98,10 @@ akka {
 #config
      """)
 
-  val noPort = ConfigFactory.parseString("akka.remote.netty.tcp.port = 0")
+  val noPort = ConfigFactory.parseString("""
+      akka.remote.netty.tcp.port = 0
+      akka.remote.artery.canonical.port = 0
+    """)
 
 }
 
@@ -202,6 +212,7 @@ class BasicClusterManualSpec extends WordSpec with ScalaFutures with Eventually 
 
         system1.log.info("Downing node 3")
         cluster1.manager ! Down(cluster3.selfMember.address)
+        probe1.expectMessageType[MemberDowned].member.address shouldEqual cluster3.selfMember.address
         probe1.expectMessageType[MemberRemoved](10.seconds).member.address shouldEqual cluster3.selfMember.address
 
         probe1.expectNoMessage()

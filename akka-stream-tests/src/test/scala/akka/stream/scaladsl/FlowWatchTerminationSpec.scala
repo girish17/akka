@@ -1,13 +1,14 @@
-/**
- * Copyright (C) 2015-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2015-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.stream.scaladsl
 
 import akka.Done
 import akka.pattern.pipe
 import akka.stream._
 import akka.stream.testkit.StreamSpec
-import akka.stream.testkit.Utils._
+import akka.stream.testkit.scaladsl.StreamTestKit._
 import akka.stream.testkit.scaladsl.{ TestSink, TestSource }
 
 import scala.util.control.NoStackTrace

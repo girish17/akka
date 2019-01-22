@@ -1,18 +1,19 @@
 /*
- * Copyright (C) 2017-2018 Lightbend Inc. <http://www.lightbend.com/>
+ * Copyright (C) 2017-2019 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.cluster
 
-import akka.actor.{ Actor, ActorLogging, ActorSelection, Address, NoSerializationVerificationNeeded, RootActorPath }
+import akka.actor.{ Actor, ActorLogging, ActorSelection, Address, NoSerializationVerificationNeeded }
 import akka.annotation.InternalApi
 import akka.cluster.ClusterEvent._
 import akka.cluster.ClusterSettings.DataCenter
-import akka.event.Logging
 import akka.remote.FailureDetectorRegistry
 import akka.util.ConstantFun
+import akka.util.ccompat._
 
-import scala.collection.{ SortedSet, immutable, breakOut }
+import scala.collection.SortedSet
+import scala.collection.immutable
 
 /**
  * INTERNAL API
@@ -271,8 +272,8 @@ private[cluster] final case class CrossDcHeartbeatingState(
     val allOtherNodes = otherDcs.values
 
     allOtherNodes.flatMap(
-      _.take(nrOfMonitoredNodesPerDc)
-        .map(_.uniqueAddress)(breakOut)).toSet
+      _.take(nrOfMonitoredNodesPerDc).iterator
+        .map(_.uniqueAddress).to(immutable.IndexedSeq)).toSet
   }
 
   /** Lists addresses in diven DataCenter that this node should send heartbeats to */
@@ -281,8 +282,8 @@ private[cluster] final case class CrossDcHeartbeatingState(
     else {
       val otherNodes = state.getOrElse(dc, emptyMembersSortedSet)
       otherNodes
-        .take(nrOfMonitoredNodesPerDc)
-        .map(_.uniqueAddress)(breakOut)
+        .take(nrOfMonitoredNodesPerDc).iterator
+        .map(_.uniqueAddress).to(immutable.Set)
     }
 
   def allMembers: Iterable[Member] =

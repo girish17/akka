@@ -1,16 +1,18 @@
-/**
- * Copyright (C) 2014-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2014-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.stream.scaladsl
 
 import java.util.concurrent.{ LinkedBlockingQueue, ThreadLocalRandom }
 import java.util.concurrent.atomic.AtomicInteger
 
-import akka.stream.ActorAttributes.{ SupervisionStrategy, supervisionStrategy }
+import akka.stream.ActorAttributes.supervisionStrategy
 import akka.stream.{ ActorAttributes, ActorMaterializer, Supervision }
 import akka.stream.Supervision.resumingDecider
 import akka.stream.impl.ReactiveStreamsCompliance
 import akka.stream.testkit.Utils._
+import akka.stream.testkit.scaladsl.StreamTestKit._
 import akka.stream.testkit._
 import akka.stream.testkit.scaladsl.TestSink
 import akka.testkit.{ TestLatch, TestProbe }
@@ -405,7 +407,6 @@ class FlowMapAsyncSpec extends StreamSpec {
     }
 
     "not invoke the decider twice for the same already failed future" in {
-      import system.dispatcher
       val failCount = new AtomicInteger(0)
       val result = Source(List(true, false))
         .mapAsync(1)(elem ⇒

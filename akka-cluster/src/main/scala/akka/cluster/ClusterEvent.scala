@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.cluster
 
 import language.postfixOps
@@ -14,8 +15,8 @@ import akka.event.EventStream
 import akka.dispatch.{ RequiresMessageQueue, UnboundedMessageQueueSemantics }
 import akka.actor.DeadLetterSuppression
 import akka.annotation.{ DoNotInherit, InternalApi }
+import akka.util.ccompat._
 
-import scala.collection.breakOut
 import scala.runtime.AbstractFunction5
 
 /**
@@ -161,7 +162,7 @@ object ClusterEvent {
     /**
      * All data centers in the cluster
      */
-    def allDataCenters: Set[String] = members.map(_.dataCenter)(breakOut)
+    def allDataCenters: Set[String] = members.iterator.map(_.dataCenter).to(immutable.Set)
 
     /**
      * Java API: All data centers in the cluster
@@ -260,6 +261,14 @@ object ClusterEvent {
    */
   final case class MemberExited(member: Member) extends MemberEvent {
     if (member.status != Exiting) throw new IllegalArgumentException("Expected Exiting status, got: " + member)
+  }
+
+  /**
+   * Member status changed to `MemberStatus.Down` and will be removed
+   * when all members have seen the `Down` status.
+   */
+  final case class MemberDowned(member: Member) extends MemberEvent {
+    if (member.status != Down) throw new IllegalArgumentException("Expected Down status, got: " + member)
   }
 
   /**
@@ -371,10 +380,10 @@ object ClusterEvent {
     else {
       val newGossip = newState.latestGossip
       val oldUnreachableNodes = oldState.dcReachabilityNoOutsideNodes.allUnreachableOrTerminated
-      newState.dcReachabilityNoOutsideNodes.allUnreachableOrTerminated.collect {
+      newState.dcReachabilityNoOutsideNodes.allUnreachableOrTerminated.iterator.collect {
         case node if !oldUnreachableNodes.contains(node) && node != newState.selfUniqueAddress ⇒
           UnreachableMember(newGossip.member(node))
-      }(collection.breakOut)
+      }.to(immutable.IndexedSeq)
     }
 
   /**
@@ -384,10 +393,10 @@ object ClusterEvent {
     if (newState eq oldState) Nil
     else {
       val newGossip = newState.latestGossip
-      oldState.dcReachabilityNoOutsideNodes.allUnreachable.collect {
+      oldState.dcReachabilityNoOutsideNodes.allUnreachable.iterator.collect {
         case node if newGossip.hasMember(node) && newState.dcReachabilityNoOutsideNodes.isReachable(node) && node != newState.selfUniqueAddress ⇒
           ReachableMember(newGossip.member(node))
-      }(collection.breakOut)
+      }.to(immutable.IndexedSeq)
     }
 
   /**
@@ -409,7 +418,7 @@ object ClusterEvent {
     if (newState eq oldState) Nil
     else {
       val otherDcs = (oldState.latestGossip.allDataCenters union newState.latestGossip.allDataCenters) - newState.selfDc
-      otherDcs.filterNot(isReachable(newState, oldState.dcReachability.allUnreachableOrTerminated)).map(UnreachableDataCenter)(collection.breakOut)
+      otherDcs.filterNot(isReachable(newState, oldState.dcReachability.allUnreachableOrTerminated)).iterator.map(UnreachableDataCenter).to(immutable.IndexedSeq)
     }
   }
 
@@ -424,7 +433,7 @@ object ClusterEvent {
       val oldUnreachableDcs = otherDcs.filterNot(isReachable(oldState, Set()))
       val currentUnreachableDcs = otherDcs.filterNot(isReachable(newState, Set()))
 
-      (oldUnreachableDcs diff currentUnreachableDcs).map(ReachableDataCenter)(collection.breakOut)
+      (oldUnreachableDcs diff currentUnreachableDcs).iterator.map(ReachableDataCenter).to(immutable.IndexedSeq)
     }
   }
 
@@ -442,17 +451,19 @@ object ClusterEvent {
         case (_, newMember :: oldMember :: Nil) if newMember.status != oldMember.status || newMember.upNumber != oldMember.upNumber ⇒
           newMember
       }
-      val memberEvents = (newMembers ++ changedMembers) collect {
+      import akka.util.ccompat.imm._
+      val memberEvents = (newMembers ++ changedMembers).unsorted collect {
         case m if m.status == Joining  ⇒ MemberJoined(m)
         case m if m.status == WeaklyUp ⇒ MemberWeaklyUp(m)
         case m if m.status == Up       ⇒ MemberUp(m)
         case m if m.status == Leaving  ⇒ MemberLeft(m)
         case m if m.status == Exiting  ⇒ MemberExited(m)
+        case m if m.status == Down     ⇒ MemberDowned(m)
         // no events for other transitions
       }
 
       val removedMembers = oldGossip.members diff newGossip.members
-      val removedEvents = removedMembers.map(m ⇒ MemberRemoved(m.copy(status = Removed), m.status))
+      val removedEvents = removedMembers.unsorted.map(m ⇒ MemberRemoved(m.copy(status = Removed), m.status))
 
       (new VectorBuilder[MemberEvent]() ++= removedEvents ++= memberEvents).result()
     }
@@ -522,7 +533,7 @@ private[cluster] final class ClusterDomainEventPublisher extends Actor with Acto
   var membershipState: MembershipState = emptyMembershipState
   def selfDc = cluster.settings.SelfDataCenter
 
-  override def preRestart(reason: Throwable, message: Option[Any]) {
+  override def preRestart(reason: Throwable, message: Option[Any]): Unit = {
     // don't postStop when restarted, no children to stop
   }
 
@@ -562,8 +573,8 @@ private[cluster] final class ClusterDomainEventPublisher extends Actor with Acto
       unreachable = unreachable,
       seenBy = membershipState.latestGossip.seenBy.map(_.address),
       leader = membershipState.leader.map(_.address),
-      roleLeaderMap = membershipState.latestGossip.allRoles.map(r ⇒
-        r → membershipState.roleLeader(r).map(_.address))(collection.breakOut),
+      roleLeaderMap = membershipState.latestGossip.allRoles.iterator.map(r ⇒
+        r → membershipState.roleLeader(r).map(_.address)).toMap,
       unreachableDataCenters)
     receiver ! state
   }

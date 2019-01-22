@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2016-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2016-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.remote.artery
 
 import java.io.RandomAccessFile
@@ -72,7 +73,7 @@ private[remote] class SynchronizedEventSink(delegate: EventSink) extends EventSi
 /**
  * INTERNAL API
  *
- * Update clock at various resolutions and aquire the resulting timestamp.
+ * Update clock at various resolutions and acquire the resulting timestamp.
  */
 private[remote] trait EventClock {
 

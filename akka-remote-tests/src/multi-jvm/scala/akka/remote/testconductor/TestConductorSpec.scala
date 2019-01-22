@@ -1,22 +1,17 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.remote.testconductor
 
 import language.postfixOps
-import com.typesafe.config.ConfigFactory
 import akka.actor.{ Actor, ActorIdentity, Deploy, Identify, Props }
 
-import scala.concurrent.Await
-import scala.concurrent.Awaitable
 import scala.concurrent.duration._
-import akka.testkit.ImplicitSender
 import akka.testkit.LongRunningTest
-import java.net.InetSocketAddress
-import java.net.InetAddress
 
 import akka.remote.RemotingMultiNodeSpec
-import akka.remote.testkit.{ MultiNodeConfig, MultiNodeSpec, STMultiNodeSpec }
+import akka.remote.testkit.MultiNodeConfig
 import akka.remote.transport.ThrottlerTransportAdapter.Direction
 
 object TestConductorMultiJvmSpec extends MultiNodeConfig {

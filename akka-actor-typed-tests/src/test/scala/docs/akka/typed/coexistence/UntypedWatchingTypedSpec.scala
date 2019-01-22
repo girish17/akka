@@ -1,5 +1,10 @@
+/*
+ * Copyright (C) 2018-2019 Lightbend Inc. <https://www.lightbend.com>
+ */
+
 package docs.akka.typed.coexistence
 
+import akka.actor.ActorLogging
 import akka.actor.typed._
 import akka.actor.typed.scaladsl.Behaviors
 import akka.testkit.TestKit
@@ -21,7 +26,7 @@ object UntypedWatchingTypedSpec {
   }
 
   //#untyped-watch
-  class Untyped extends untyped.Actor {
+  class Untyped extends untyped.Actor with ActorLogging {
     // context.spawn is an implicit extension method
     val second: ActorRef[Typed.Command] =
       context.spawn(Typed.behavior, "second")
@@ -36,11 +41,11 @@ object UntypedWatchingTypedSpec {
 
     override def receive = {
       case Typed.Pong ⇒
-        println(s"$self got Pong from ${sender()}")
+        log.info(s"$self got Pong from ${sender()}")
         // context.stop is an implicit extension method
         context.stop(second)
       case untyped.Terminated(ref) ⇒
-        println(s"$self observed termination of $ref")
+        log.info(s"$self observed termination of $ref")
         context.stop(self)
     }
   }
@@ -53,10 +58,10 @@ object UntypedWatchingTypedSpec {
     case object Pong
 
     val behavior: Behavior[Command] =
-      Behaviors.immutable { (ctx, msg) ⇒
-        msg match {
+      Behaviors.receive { (context, message) ⇒
+        message match {
           case Ping(replyTo) ⇒
-            println(s"${ctx.self} got Ping from $replyTo")
+            context.log.info(s"${context.self} got Ping from $replyTo")
             // replyTo is an untyped actor that has been converted for coexistence
             replyTo ! Pong
             Behaviors.same
@@ -87,6 +92,7 @@ class UntypedWatchingTypedSpec extends WordSpec {
       val system = akka.actor.ActorSystem("UntypedToTypedSystem")
       val typedSystem: ActorSystem[Nothing] = system.toTyped
       //#convert-untyped
+      typedSystem.scheduler // remove compile warning
       TestKit.shutdownActorSystem(system)
     }
   }

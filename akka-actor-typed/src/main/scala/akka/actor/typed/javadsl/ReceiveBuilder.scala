@@ -1,18 +1,16 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.actor.typed.javadsl
 
 import scala.annotation.tailrec
 import akka.japi.function.{ Creator, Function, Predicate }
-import akka.actor.typed.javadsl.Behaviors.Receive
 import akka.actor.typed.{ Behavior, Signal }
-import ReceiveBuilder._
 import akka.annotation.InternalApi
 
 /**
- * Used when implementing [[Behaviors.MutableBehavior]].
+ * Used when implementing [[AbstractBehavior]].
  *
  * When handling a message or signal, this [[Behavior]] will consider all handlers in the order they were added,
  * looking for the first handler for which both the type and the (optional) predicate match.
@@ -20,9 +18,11 @@ import akka.annotation.InternalApi
  * @tparam T the common superclass of all supported messages.
  */
 class ReceiveBuilder[T] private (
-  private val messageHandlers: List[Case[T, T]],
-  private val signalHandlers:  List[Case[T, Signal]]
+  private val messageHandlers: List[ReceiveBuilder.Case[T, T]],
+  private val signalHandlers:  List[ReceiveBuilder.Case[T, Signal]]
 ) {
+
+  import ReceiveBuilder.Case
 
   def build(): Receive[T] = new BuiltReceive(messageHandlers.reverse, signalHandlers.reverse)
 
@@ -136,8 +136,6 @@ class ReceiveBuilder[T] private (
 object ReceiveBuilder {
   def create[T]: ReceiveBuilder[T] = new ReceiveBuilder[T](Nil, Nil)
 
-  import scala.language.existentials
-
   /** INTERNAL API */
   @InternalApi
   private[javadsl] final case class Case[BT, MT](`type`: Class[_ <: MT], test: Option[MT ⇒ Boolean], handler: MT ⇒ Behavior[BT])
@@ -145,12 +143,13 @@ object ReceiveBuilder {
 }
 
 /**
- * Receive type for [[Behaviors.MutableBehavior]]
+ * Receive type for [[AbstractBehavior]]
  */
-private class BuiltReceive[T](
-  private val messageHandlers: List[Case[T, T]],
-  private val signalHandlers:  List[Case[T, Signal]]
+private final class BuiltReceive[T](
+  private val messageHandlers: List[ReceiveBuilder.Case[T, T]],
+  private val signalHandlers:  List[ReceiveBuilder.Case[T, Signal]]
 ) extends Receive[T] {
+  import ReceiveBuilder.Case
 
   override def receiveMessage(msg: T): Behavior[T] = receive[T](msg, messageHandlers)
 

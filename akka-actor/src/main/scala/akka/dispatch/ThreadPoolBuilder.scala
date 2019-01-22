@@ -1,5 +1,5 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.dispatch
@@ -210,7 +210,7 @@ trait ExecutorServiceDelegate extends ExecutorService {
 
   def execute(command: Runnable) = executor.execute(command)
 
-  def shutdown() { executor.shutdown() }
+  def shutdown(): Unit = { executor.shutdown() }
 
   def shutdownNow() = executor.shutdownNow()
 

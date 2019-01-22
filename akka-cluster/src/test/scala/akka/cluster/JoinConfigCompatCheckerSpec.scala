@@ -1,24 +1,54 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.cluster
 
-import akka.actor.{ ActorSystem, Address }
-import akka.cluster.InternalClusterAction.LeaderActionsTick
-import akka.cluster.MemberStatus.{ Removed, Up }
 import akka.testkit.{ AkkaSpec, LongRunningTest }
 import com.typesafe.config.{ Config, ConfigFactory }
-import org.scalatest.{ Matchers, WordSpec }
 
 import scala.concurrent.duration._
-import scala.collection.JavaConverters._
 import scala.collection.{ immutable ⇒ im }
 
 object JoinConfigCompatCheckerSpec {
 
+  val baseConfig: Config =
+    ConfigFactory.parseString(
+      """
+     akka.actor.provider = "cluster"
+     akka.coordinated-shutdown.terminate-actor-system = on
+     akka.remote.netty.tcp.port = 0
+     akka.remote.artery.canonical.port = 0
+     akka.cluster.jmx.multi-mbeans-in-same-jvm = on
+     """
+    )
+
+  val configWithChecker: Config =
+    ConfigFactory.parseString(
+      """
+      akka.cluster {
+        config-compat-test = "test"
+        sensitive.properties {
+          username = "abc"
+          password = "def"
+        }
+
+        configuration-compatibility-check {
+          enforce-on-join = on
+          checkers {
+           akka-cluster-test = "akka.cluster.JoinConfigCompatCheckerTest"
+          }
+          sensitive-config-paths {
+            akka = [ "akka.cluster.sensitive.properties" ]
+          }
+        }
+      }
+    """
+    ).withFallback(baseConfig)
 }
 
-class JoinConfigCompatCheckerSpec extends AkkaSpec() with ClusterTestKit {
+class JoinConfigCompatCheckerSpec extends AkkaSpec with ClusterTestKit {
+  import JoinConfigCompatCheckerSpec._
 
   "A Joining Node" must {
 
@@ -31,7 +61,7 @@ class JoinConfigCompatCheckerSpec extends AkkaSpec() with ClusterTestKit {
       clusterTestUtil.formCluster()
 
       try {
-        awaitCond(Cluster(joiningNode).readView.status == Up, message = "awaiting joining node to be 'Up'")
+        awaitCond(clusterTestUtil.isMemberUp(joiningNode), message = "awaiting joining node to be 'Up'")
       } finally {
         clusterTestUtil.shutdownAll()
       }
@@ -68,7 +98,7 @@ class JoinConfigCompatCheckerSpec extends AkkaSpec() with ClusterTestKit {
 
         // node will shutdown after unsuccessful join attempt
         within(5.seconds) {
-          awaitCond(Cluster(joiningNode).readView.isTerminated)
+          awaitCond(clusterTestUtil.isTerminated(joiningNode))
         }
 
       } finally {
@@ -111,7 +141,7 @@ class JoinConfigCompatCheckerSpec extends AkkaSpec() with ClusterTestKit {
       try {
         // node will shutdown after unsuccessful join attempt
         within(5.seconds) {
-          awaitCond(Cluster(joiningNode).readView.isTerminated)
+          awaitCond(clusterTestUtil.isTerminated(joiningNode))
         }
 
       } finally {
@@ -150,7 +180,7 @@ class JoinConfigCompatCheckerSpec extends AkkaSpec() with ClusterTestKit {
       try {
         // node will shutdown after unsuccessful join attempt
         within(5.seconds) {
-          awaitCond(Cluster(joiningNode).readView.isTerminated)
+          awaitCond(clusterTestUtil.isTerminated(joiningNode))
         }
 
       } finally {
@@ -192,7 +222,7 @@ class JoinConfigCompatCheckerSpec extends AkkaSpec() with ClusterTestKit {
 
       try {
         // join with compatible node
-        awaitCond(Cluster(joiningNode).readView.status == Up, message = "awaiting joining node to be 'Up'")
+        awaitCond(clusterTestUtil.isMemberUp(joiningNode), message = "awaiting joining node to be 'Up'")
       } finally {
         clusterTestUtil.shutdownAll()
       }
@@ -229,7 +259,7 @@ class JoinConfigCompatCheckerSpec extends AkkaSpec() with ClusterTestKit {
 
       try {
         // join with compatible node
-        awaitCond(Cluster(joiningNode).readView.status == Up, message = "awaiting joining node to be 'Up'")
+        awaitCond(clusterTestUtil.isMemberUp(joiningNode), message = "awaiting joining node to be 'Up'")
       } finally {
         clusterTestUtil.shutdownAll()
       }
@@ -263,7 +293,7 @@ class JoinConfigCompatCheckerSpec extends AkkaSpec() with ClusterTestKit {
       try {
         // node will shutdown after unsuccessful join attempt
         within(5.seconds) {
-          awaitCond(Cluster(joiningNode).readView.isTerminated)
+          awaitCond(clusterTestUtil.isTerminated(joiningNode))
         }
 
       } finally {
@@ -287,13 +317,13 @@ class JoinConfigCompatCheckerSpec extends AkkaSpec() with ClusterTestKit {
 
       try {
         // we must wait second node to join the cluster before shutting down the first node
-        awaitCond(Cluster(secondNode).readView.status == Up, message = "awaiting second node to be 'Up'")
+        awaitCond(clusterTestUtil.isMemberUp(secondNode), message = "awaiting second node to be 'Up'")
 
         val restartedNode = clusterTestUtil.quitAndRestart(firstNode, configWithChecker)
         clusterTestUtil.joinCluster(restartedNode)
 
         within(20.seconds) {
-          awaitCond(Cluster(restartedNode).readView.status == Up, message = "awaiting restarted first node to be 'Up'")
+          awaitCond(clusterTestUtil.isMemberUp(restartedNode), message = "awaiting restarted first node to be 'Up'")
         }
 
       } finally {
@@ -331,14 +361,14 @@ class JoinConfigCompatCheckerSpec extends AkkaSpec() with ClusterTestKit {
 
       try {
         // we must wait second node to join the cluster before shutting down the first node
-        awaitCond(Cluster(secondNode).readView.status == Up, message = "awaiting second node to be 'Up'")
+        awaitCond(clusterTestUtil.isMemberUp(secondNode), message = "awaiting second node to be 'Up'")
 
         val restartedNode = clusterTestUtil.quitAndRestart(firstNode, joinNodeConfig.withFallback(configWithChecker))
         clusterTestUtil.joinCluster(restartedNode)
 
         // node will shutdown after unsuccessful join attempt
         within(20.seconds) {
-          awaitCond(Cluster(restartedNode).readView.isTerminated)
+          awaitCond(clusterTestUtil.isTerminated(restartedNode))
         }
 
       } finally {
@@ -381,14 +411,14 @@ class JoinConfigCompatCheckerSpec extends AkkaSpec() with ClusterTestKit {
 
       try {
         // we must wait second node to join the cluster before shutting down the first node
-        awaitCond(Cluster(secondNode).readView.status == Up, message = "awaiting second node to be 'Up'")
+        awaitCond(clusterTestUtil.isMemberUp(secondNode), message = "awaiting second node to be 'Up'")
 
         val restartedNode = clusterTestUtil.quitAndRestart(firstNode, joinNodeConfig.withFallback(configWithChecker))
         clusterTestUtil.joinCluster(restartedNode)
 
         // node will shutdown after unsuccessful join attempt
         within(20.seconds) {
-          awaitCond(Cluster(restartedNode).readView.isTerminated)
+          awaitCond(clusterTestUtil.isTerminated(restartedNode))
         }
 
       } finally {
@@ -427,14 +457,14 @@ class JoinConfigCompatCheckerSpec extends AkkaSpec() with ClusterTestKit {
 
       try {
         // we must wait second node to join the cluster before shutting down the first node
-        awaitCond(Cluster(secondNode).readView.status == Up, message = "awaiting second node to be 'Up'")
+        awaitCond(clusterTestUtil.isMemberUp(secondNode), message = "awaiting second node to be 'Up'")
 
         val restartedNode = clusterTestUtil.quitAndRestart(firstNode, joinNodeConfig.withFallback(baseConfig))
         clusterTestUtil.joinCluster(restartedNode)
 
         // node will shutdown after unsuccessful join attempt
         within(20.seconds) {
-          awaitCond(Cluster(restartedNode).readView.isTerminated)
+          awaitCond(clusterTestUtil.isTerminated(restartedNode))
         }
 
       } finally {
@@ -478,14 +508,14 @@ class JoinConfigCompatCheckerSpec extends AkkaSpec() with ClusterTestKit {
       try {
         // join with compatible node
         // we must wait second node to join the cluster before shutting down the first node
-        awaitCond(Cluster(secondNode).readView.status == Up, message = "awaiting second node to be 'Up'")
+        awaitCond(clusterTestUtil.isMemberUp(secondNode), message = "awaiting second node to be 'Up'")
 
         val restartedNode = clusterTestUtil.quitAndRestart(firstNode, joinNodeConfig.withFallback(configWithChecker))
         clusterTestUtil.joinCluster(restartedNode)
 
         // node will will have joined the cluster
         within(20.seconds) {
-          awaitCond(Cluster(restartedNode).readView.status == Up, message = "awaiting restarted node to be 'Up'")
+          awaitCond(clusterTestUtil.isMemberUp(restartedNode), message = "awaiting restarted node to be 'Up'")
         }
       } finally {
         clusterTestUtil.shutdownAll()
@@ -525,14 +555,14 @@ class JoinConfigCompatCheckerSpec extends AkkaSpec() with ClusterTestKit {
       try {
         // join with compatible node
         // we must wait second node to join the cluster before shutting down the first node
-        awaitCond(Cluster(secondNode).readView.status == Up, message = "awaiting second node to be 'Up'")
+        awaitCond(clusterTestUtil.isMemberUp(secondNode), message = "awaiting second node to be 'Up'")
 
         val restartedNode = clusterTestUtil.quitAndRestart(firstNode, joinNodeConfig.withFallback(configWithChecker))
         clusterTestUtil.joinCluster(restartedNode)
 
         // node will will have joined the cluster
         within(20.seconds) {
-          awaitCond(Cluster(restartedNode).readView.status == Up, message = "awaiting restarted node to be 'Up'")
+          awaitCond(clusterTestUtil.isMemberUp(restartedNode), message = "awaiting restarted node to be 'Up'")
         }
       } finally {
         clusterTestUtil.shutdownAll()
@@ -587,47 +617,13 @@ class JoinConfigCompatCheckerSpec extends AkkaSpec() with ClusterTestKit {
       try {
         // node will shutdown after unsuccessful join attempt
         within(5.seconds) {
-          awaitCond(Cluster(joiningNode).readView.isTerminated)
+          awaitCond(clusterTestUtil.isTerminated(joiningNode))
         }
       } finally {
         clusterTestUtil.shutdownAll()
       }
     }
   }
-
-  val baseConfig: Config =
-    ConfigFactory.parseString(
-      """
-     akka.actor.provider = "cluster"
-     akka.coordinated-shutdown.terminate-actor-system = on
-     akka.remote.netty.tcp.port = 0
-     akka.remote.artery.canonical.port = 0
-     """
-    )
-
-  val configWithChecker: Config =
-    ConfigFactory.parseString(
-      """
-      akka.cluster {
-        config-compat-test = "test"
-        sensitive.properties {
-          username = "abc"
-          password = "def"
-        }
-
-        configuration-compatibility-check {
-          enforce-on-join = on
-          checkers {
-           akka-cluster-test = "akka.cluster.JoinConfigCompatCheckerTest"
-          }
-          sensitive-config-paths {
-            akka = [ "akka.cluster.sensitive.properties" ]
-          }
-        }
-      }
-    """
-    ).withFallback(baseConfig)
-
 }
 
 class JoinConfigCompatCheckerTest extends JoinConfigCompatChecker {

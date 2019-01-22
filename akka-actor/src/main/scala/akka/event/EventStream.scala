@@ -1,9 +1,8 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
-package akka.event
 
-import language.implicitConversions
+package akka.event
 
 import akka.actor.{ ActorRef, ActorSystem }
 import akka.event.Logging.simpleName
@@ -24,7 +23,7 @@ class EventStream(sys: ActorSystem, private val debug: Boolean) extends LoggingB
 
   def this(sys: ActorSystem) = this(sys, debug = false)
 
-  type Event = AnyRef
+  type Event = Any
   type Classifier = Class[_]
 
   /** Either the list of subscribed actors, or a ref to an [[akka.event.EventStreamUnsubscriber]] */
@@ -35,9 +34,9 @@ class EventStream(sys: ActorSystem, private val debug: Boolean) extends LoggingB
     def isSubclass(x: Class[_], y: Class[_]) = y isAssignableFrom x
   }
 
-  protected def classify(event: AnyRef): Class[_] = event.getClass
+  protected def classify(event: Any): Class[_] = event.getClass
 
-  protected def publish(event: AnyRef, subscriber: ActorRef) = {
+  protected def publish(event: Any, subscriber: ActorRef) = {
     if (sys == null && subscriber.isTerminated) unsubscribe(subscriber)
     else subscriber ! event
   }
@@ -57,7 +56,7 @@ class EventStream(sys: ActorSystem, private val debug: Boolean) extends LoggingB
     ret
   }
 
-  override def unsubscribe(subscriber: ActorRef) {
+  override def unsubscribe(subscriber: ActorRef): Unit = {
     if (subscriber eq null) throw new IllegalArgumentException("subscriber is null")
     super.unsubscribe(subscriber)
     if (debug) publish(Logging.Debug(simpleName(this), this.getClass, "unsubscribing " + subscriber + " from all channels"))

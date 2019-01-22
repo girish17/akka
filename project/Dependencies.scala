@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2016-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2016-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka
 
 import sbt._
@@ -14,24 +15,25 @@ object Dependencies {
   lazy val scalaCheckVersion = settingKey[String]("The version of ScalaCheck to use.")
   lazy val java8CompatVersion = settingKey[String]("The version of scala-java8-compat to use.")
   val junitVersion = "4.12"
-  val sslConfigVersion = "0.2.2"
+  val sslConfigVersion = "0.3.7"
   val slf4jVersion = "1.7.25"
   val scalaXmlVersion = "1.0.6"
-  val aeronVersion = "1.7.0"
+  val aeronVersion = "1.12.0"
 
   val Versions = Seq(
-    crossScalaVersions := Seq("2.11.12", "2.12.4"),
+    crossScalaVersions := Seq("2.12.8", "2.11.12", "2.13.0-M5"),
     scalaVersion := System.getProperty("akka.build.scalaVersion", crossScalaVersions.value.head),
-    scalaStmVersion := sys.props.get("akka.build.scalaStmVersion").getOrElse("0.8"),
+    scalaStmVersion := sys.props.get("akka.build.scalaStmVersion").getOrElse("0.9"),
     scalaCheckVersion := sys.props.get("akka.build.scalaCheckVersion").getOrElse(
       CrossVersion.partialVersion(scalaVersion.value) match {
-        case Some((2, n)) if n >= 12 ⇒ "1.13.5" // does not work for 2.11
+        case Some((2, n)) if n >= 12 ⇒ "1.14.0" // does not work for 2.11
         case _                       ⇒ "1.13.2"
       }),
-    scalaTestVersion := "3.0.4",
+    scalaTestVersion := "3.0.6-SNAP5",
     java8CompatVersion := {
       CrossVersion.partialVersion(scalaVersion.value) match {
-        case Some((2, n)) if n >= 12 ⇒ "0.8.0"
+        case Some((2, n)) if n >= 13 ⇒ "0.9.0"
+        case Some((2, n)) if n == 12 ⇒ "0.8.0"
         case _                       ⇒ "0.7.0"
       }
     })
@@ -42,7 +44,7 @@ object Dependencies {
     val camelCore = "org.apache.camel" % "camel-core" % "2.17.7" exclude ("org.slf4j", "slf4j-api") // ApacheV2
 
     // when updating config version, update links ActorSystem ScalaDoc to link to the updated version
-    val config = "com.typesafe" % "config" % "1.3.2" // ApacheV2
+    val config = "com.typesafe" % "config" % "1.3.3" // ApacheV2
     val netty = "io.netty" % "netty" % "3.10.6.Final" // ApacheV2
     val scalaStm = Def.setting { "org.scala-stm" %% "scala-stm" % scalaStmVersion.value } // Modified BSD (Scala)
 
@@ -57,13 +59,15 @@ object Dependencies {
 
     val sigar = "org.fusesource" % "sigar" % "1.6.4" // ApacheV2
 
+    val jctools = "org.jctools" % "jctools-core" % "2.1.2" // ApacheV2
+
     // reactive streams
     val reactiveStreams = "org.reactivestreams" % "reactive-streams" % "1.0.2" // CC0
 
     // ssl-config
     val sslConfigCore = "com.typesafe" %% "ssl-config-core" % sslConfigVersion // ApacheV2
 
-    val lmdb = "org.lmdbjava" % "lmdbjava" % "0.6.0" // ApacheV2, OpenLDAP Public License
+    val lmdb = "org.lmdbjava" % "lmdbjava" % "0.6.1" // ApacheV2, OpenLDAP Public License
 
     val junit = "junit" % "junit" % junitVersion // Common Public License 1.0
 
@@ -72,18 +76,20 @@ object Dependencies {
 
     val aeronDriver = "io.aeron" % "aeron-driver" % aeronVersion // ApacheV2
     val aeronClient = "io.aeron" % "aeron-client" % aeronVersion // ApacheV2
+
+
     object Docs {
-      val sprayJson = "io.spray" %% "spray-json" % "1.3.3" % "test"
-      val gson = "com.google.code.gson" % "gson" % "2.8.2" % "test"
+      val sprayJson = "io.spray" %% "spray-json" % "1.3.4" % "test"
+      val gson = "com.google.code.gson" % "gson" % "2.8.5" % "test"
     }
 
     object Test {
       val commonsMath = "org.apache.commons" % "commons-math" % "2.2" % "test" // ApacheV2
-      val commonsIo = "commons-io" % "commons-io" % "2.5" % "test" // ApacheV2
-      val commonsCodec = "commons-codec" % "commons-codec" % "1.10" % "test" // ApacheV2
+      val commonsIo = "commons-io" % "commons-io" % "2.6" % "test" // ApacheV2
+      val commonsCodec = "commons-codec" % "commons-codec" % "1.11" % "test" // ApacheV2
       val junit = "junit" % "junit" % junitVersion % "test" // Common Public License 1.0
       val logback = "ch.qos.logback" % "logback-classic" % "1.2.3" % "test" // EPL 1.0 / LGPL 2.1
-      val mockito = "org.mockito" % "mockito-core" % "2.7.16" % "test" // MIT
+      val mockito = "org.mockito" % "mockito-core" % "2.19.1" % "test" // MIT
       // changing the scalatest dependency must be reflected in akka-docs/rst/dev/multi-jvm-testing.rst
       val scalatest = Def.setting { "org.scalatest" %% "scalatest" % scalaTestVersion.value % "test" } // ApacheV2
       val scalacheck = Def.setting { "org.scalacheck" %% "scalacheck" % scalaCheckVersion.value % "test" } // New BSD
@@ -94,6 +100,9 @@ object Dependencies {
 
       // in-memory filesystem for file related tests
       val jimfs = "com.google.jimfs" % "jimfs" % "1.1" % "test" // ApacheV2
+
+      // docker utils
+      val dockerClient = "com.spotify" % "docker-client" % "8.13.1" % "test" // ApacheV2
 
       // metrics, measurements, perf testing
       val metrics = "io.dropwizard.metrics" % "metrics-core" % "3.2.5" % "test" // ApacheV2
@@ -115,10 +124,20 @@ object Dependencies {
       // If changed, update akka-docs/build.sbt as well
       val sigarLoader = "io.kamon" % "sigar-loader" % "1.6.6-rev002" % "optional;provided;test" // ApacheV2
 
+       // Non-default module in Java9, removed in Java11. For Camel.
+      val jaxb = "javax.xml.bind" % "jaxb-api" % "2.3.0" % "provided;test"
+      val activation = "com.sun.activation" % "javax.activation" % "1.2.0" % "provided;test"
+
+
       val levelDB = "org.iq80.leveldb" % "leveldb" % "0.10" % "optional;provided" // ApacheV2
+      val levelDBmultiJVM = "org.iq80.leveldb" % "leveldb" % "0.10" % "optional;provided;multi-jvm" // ApacheV2
       val levelDBNative = "org.fusesource.leveldbjni" % "leveldbjni-all" % "1.8" % "optional;provided" // New BSD
 
       val junit = Compile.junit % "optional;provided;test"
+
+
+      val scalatest = Def.setting { "org.scalatest" %% "scalatest" % scalaTestVersion.value % "optional;provided;test" } // ApacheV2
+
     }
 
   }
@@ -129,12 +148,17 @@ object Dependencies {
 
   val actor = l ++= Seq(config, java8Compat.value)
 
+  val discovery = l ++= Seq(Test.junit, Test.scalatest.value)
+
   val testkit = l ++= Seq(Test.junit, Test.scalatest.value) ++ Test.metricsAll
 
-  val actorTests = l ++= Seq(Test.junit, Test.scalatest.value, Test.commonsCodec, Test.commonsMath,
-    Test.mockito, Test.scalacheck.value, Test.jimfs)
+  val actorTests = l ++= Seq(
+    Test.junit, Test.scalatest.value, Test.commonsCodec, Test.commonsMath,
+    Test.mockito, Test.scalacheck.value, Test.jimfs,
+    Test.dockerClient, Provided.activation // dockerClient needs javax.activation.DataSource in JDK 11+
+  )
 
-  val typedTestkit = l ++= Seq(Provided.junit)
+  val actorTestkitTyped = l ++= Seq(Provided.junit, Provided.scalatest.value)
 
   val remote = l ++= Seq(netty, aeronDriver, aeronClient, Test.junit, Test.scalatest.value, Test.jimfs)
 
@@ -144,7 +168,7 @@ object Dependencies {
 
   val clusterTools = l ++= Seq(Test.junit, Test.scalatest.value)
 
-  val clusterSharding = l ++= Seq(Provided.levelDB, Provided.levelDBNative, Test.junit, Test.scalatest.value, Test.commonsIo)
+  val clusterSharding = l ++= Seq(Provided.levelDBmultiJVM, Provided.levelDBNative, Test.junit, Test.scalatest.value, Test.commonsIo)
 
   val clusterMetrics = l ++= Seq(Provided.sigarLoader, Test.slf4jJul, Test.slf4jLog4j, Test.logback, Test.mockito)
 
@@ -156,21 +180,21 @@ object Dependencies {
 
   val persistence = l ++= Seq(Provided.levelDB, Provided.levelDBNative, Test.scalatest.value, Test.junit, Test.commonsIo, Test.commonsCodec, Test.scalaXml)
 
-  val persistenceQuery = l ++= Seq(Test.scalatest.value, Test.junit, Test.commonsIo)
+  val persistenceQuery = l ++= Seq(Test.scalatest.value, Test.junit, Test.commonsIo, Provided.levelDB, Provided.levelDBNative)
 
-  val persistenceTck = l ++= Seq(Test.scalatest.value.withConfigurations(Some("compile")), Test.junit.withConfigurations(Some("compile")))
+  val persistenceTck = l ++= Seq(Test.scalatest.value.withConfigurations(Some("compile")), Test.junit.withConfigurations(Some("compile")), Provided.levelDB, Provided.levelDBNative)
 
   val persistenceShared = l ++= Seq(Provided.levelDB, Provided.levelDBNative)
 
-  val camel = l ++= Seq(camelCore, Test.scalatest.value, Test.junit, Test.mockito, Test.logback, Test.commonsIo)
+  val camel = l ++= Seq(camelCore, Provided.jaxb, Provided.activation, Test.scalatest.value, Test.junit, Test.mockito, Test.logback, Test.commonsIo)
 
   val osgi = l ++= Seq(osgiCore, osgiCompendium, Test.logback, Test.commonsIo, Test.pojosr, Test.tinybundles, Test.scalatest.value, Test.junit)
 
-  val docs = l ++= Seq(Test.scalatest.value, Test.junit, Docs.sprayJson, Docs.gson)
+  val docs = l ++= Seq(Test.scalatest.value, Test.junit, Docs.sprayJson, Docs.gson, Provided.levelDB)
 
   val contrib = l ++= Seq(Test.commonsIo)
 
-  val benchJmh = l ++= Seq(Provided.levelDB, Provided.levelDBNative)
+  val benchJmh = l ++= Seq(Provided.levelDB, Provided.levelDBNative, Compile.jctools)
 
   // akka stream
 

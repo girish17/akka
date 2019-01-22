@@ -1,6 +1,5 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
- * Copyright (C) 2012-2016 Eligotech BV.
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.persistence.journal.leveldb
@@ -34,7 +33,7 @@ private[persistence] trait LeveldbRecovery extends AsyncRecovery { this: Leveldb
 
   def replayMessages(persistenceId: Int, fromSequenceNr: Long, toSequenceNr: Long, max: Long)(replayCallback: PersistentRepr ⇒ Unit): Unit = {
     @scala.annotation.tailrec
-    def go(iter: DBIterator, key: Key, ctr: Long, replayCallback: PersistentRepr ⇒ Unit) {
+    def go(iter: DBIterator, key: Key, ctr: Long, replayCallback: PersistentRepr ⇒ Unit): Unit = {
       if (iter.hasNext) {
         val nextEntry = iter.next()
         val nextKey = keyFromBytes(nextEntry.getKey)
@@ -83,7 +82,7 @@ private[persistence] trait LeveldbRecovery extends AsyncRecovery { this: Leveldb
     replayCallback: ReplayedTaggedMessage ⇒ Unit): Unit = {
 
     @scala.annotation.tailrec
-    def go(iter: DBIterator, key: Key, ctr: Long, replayCallback: ReplayedTaggedMessage ⇒ Unit) {
+    def go(iter: DBIterator, key: Key, ctr: Long, replayCallback: ReplayedTaggedMessage ⇒ Unit): Unit = {
       if (iter.hasNext) {
         val nextEntry = iter.next()
         val nextKey = keyFromBytes(nextEntry.getKey)

@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.remote.artery
 
 import akka.testkit._
@@ -9,13 +10,11 @@ import com.typesafe.config.ConfigFactory
 import akka.actor.RootActorPath
 import scala.concurrent.duration._
 import akka.testkit.SocketUtil
-import akka.event.Logging.Warning
 import akka.remote.QuarantinedEvent
 import akka.remote.RARP
-import akka.remote.RemoteActorRef
 
 object RemoteDeathWatchSpec {
-  val otherPort = SocketUtil.temporaryLocalPort(udp = true)
+  val otherPort = ArteryMultiNodeSpec.freePort(ConfigFactory.load())
 
   val config = ConfigFactory.parseString(s"""
     akka {

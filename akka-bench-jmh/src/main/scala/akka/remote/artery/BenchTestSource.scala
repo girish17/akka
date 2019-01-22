@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2016-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2016-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.remote.artery
 
 import akka.stream.Attributes
@@ -12,7 +13,7 @@ import akka.stream.stage.OutHandler
 
 /**
  * Emits integers from 1 to the given `elementCount`. The `java.lang.Integer`
- * objects are allocated in the constructor of the stage, so it should be created
+ * objects are allocated in the constructor of the operator, so it should be created
  * before the benchmark is started.
  */
 class BenchTestSource(elementCount: Int) extends GraphStage[SourceShape[java.lang.Integer]] {

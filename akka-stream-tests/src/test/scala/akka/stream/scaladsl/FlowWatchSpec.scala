@@ -1,11 +1,12 @@
-/**
- * Copyright (C) 2014-2017 Lightbend Inc. <http://www.lightbend.com>
+/*
+ * Copyright (C) 2014-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.stream.scaladsl
 
 import akka.actor.{ Actor, PoisonPill, Props }
 import akka.stream.ActorMaterializer
-import akka.stream.testkit.Utils._
+import akka.stream.testkit.scaladsl.StreamTestKit._
 import akka.stream.testkit._
 import akka.testkit.TestActors
 

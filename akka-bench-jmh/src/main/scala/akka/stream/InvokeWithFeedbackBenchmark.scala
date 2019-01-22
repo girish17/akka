@@ -1,5 +1,5 @@
-/**
- * Copyright (C) 2014-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2014-2019 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.stream
@@ -33,7 +33,7 @@ class InvokeWithFeedbackBenchmark {
 
     // these are currently the only two built in stages using invokeWithFeedback
     val (in, out) =
-      Source.queue[Int](bufferSize = 1, overflowStrategy = OverflowStrategies.Backpressure)
+      Source.queue[Int](bufferSize = 1, overflowStrategy = OverflowStrategy.backpressure)
         .toMat(Sink.queue[Int]())(Keep.both)
         .run()
 

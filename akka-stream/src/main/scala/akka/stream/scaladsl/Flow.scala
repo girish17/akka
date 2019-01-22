@@ -1,12 +1,13 @@
-/**
- * Copyright (C) 2014-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2014-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.stream.scaladsl
 
 import akka.event.LoggingAdapter
 import akka.stream._
 import akka.Done
-import akka.stream.impl._
+import akka.stream.impl.{ LinearTraversalBuilder, ProcessorModule, Timers, SubFlowImpl, TraversalBuilder, Throttle, fusing }
 import akka.stream.impl.fusing._
 import akka.stream.stage._
 import akka.util.{ ConstantFun, Timeout }
@@ -48,9 +49,29 @@ final class Flow[-In, +Out, +Mat](
 
   override def viaMat[T, Mat2, Mat3](flow: Graph[FlowShape[Out, T], Mat2])(combine: (Mat, Mat2) ⇒ Mat3): Flow[In, T, Mat3] = {
     if (this.isIdentity) {
-      new Flow(
-        LinearTraversalBuilder.fromBuilder(flow.traversalBuilder, flow.shape, combine),
-        flow.shape).asInstanceOf[Flow[In, T, Mat3]]
+      // optimization by returning flow if possible since we know Mat2 == Mat3 from flow
+      if (combine == Keep.right) Flow.fromGraph(flow).asInstanceOf[Flow[In, T, Mat3]]
+      else {
+        // Keep.none is optimized and we know left means Mat3 == NotUsed
+        val useCombine =
+          if (combine == Keep.left) Keep.none
+          else combine
+        new Flow(
+          LinearTraversalBuilder.empty().append(flow.traversalBuilder, flow.shape, useCombine),
+          flow.shape).asInstanceOf[Flow[In, T, Mat3]]
+      }
+    } else if (flow.traversalBuilder eq Flow.identityTraversalBuilder) {
+      // optimization by returning this if possible since we know Mat2 == Mat from this
+      if (combine == Keep.left) this.asInstanceOf[Flow[In, T, Mat3]]
+      else {
+        // Keep.none is somewhat optimized and we know Mat == NotUsed
+        val useCombine =
+          if (combine == Keep.right) Keep.none
+          else combine
+        new Flow(
+          traversalBuilder.append(LinearTraversalBuilder.empty(), shape, useCombine),
+          FlowShape[In, T](shape.in, flow.shape.out))
+      }
     } else {
       new Flow(
         traversalBuilder.append(flow.traversalBuilder, flow.shape, combine),
@@ -218,7 +239,7 @@ final class Flow[-In, +Out, +Mat](
    * set directly on the individual graphs of the composite.
    *
    * Note that this operation has no effect on an empty Flow (because the attributes apply
-   * only to the contained processing stages).
+   * only to the contained processing operators).
    */
   override def withAttributes(attr: Attributes): Repr[Out] =
     new Flow(
@@ -288,7 +309,8 @@ final class Flow[-In, +Out, +Mat](
       }
 
   /** Converts this Scala DSL element to it's Java DSL counterpart. */
-  def asJava: javadsl.Flow[In, Out, Mat] = new javadsl.Flow(this)
+  def asJava[JIn <: In, JOut >: Out, JMat >: Mat]: javadsl.Flow[JIn, JOut, JMat] =
+    new javadsl.Flow(this)
 }
 
 object Flow {
@@ -332,8 +354,8 @@ object Flow {
       case f: Flow[I, O, M]         ⇒ f
       case f: javadsl.Flow[I, O, M] ⇒ f.asScala
       case g: GraphStageWithMaterializedValue[FlowShape[I, O], M] ⇒
-        // move these from the stage itself to make the returned source
-        // behave as it is the stage with regards to attributes
+        // move these from the operator itself to make the returned source
+        // behave as it is the operator with regards to attributes
         val attrs = g.traversalBuilder.attributes
         val noAttrStage = g.withAttributes(Attributes.none)
         new Flow(
@@ -403,7 +425,7 @@ object Flow {
 
   /**
    * Allows coupling termination (cancellation, completion, erroring) of Sinks and Sources while creating a Flow from them.
-   * Similar to [[Flow.fromSinkAndSource]] however couples the termination of these two stages.
+   * Similar to [[Flow.fromSinkAndSource]] however couples the termination of these two operators.
    *
    * The resulting flow can be visualized as:
    * {{{
@@ -466,7 +488,7 @@ object Flow {
 
   /**
    * Allows coupling termination (cancellation, completion, erroring) of Sinks and Sources while creating a Flow from them.
-   * Similar to [[Flow.fromSinkAndSource]] however couples the termination of these two stages.
+   * Similar to [[Flow.fromSinkAndSource]] however couples the termination of these two operators.
    *
    * The resulting flow can be visualized as:
    * {{{
@@ -500,20 +522,9 @@ object Flow {
 
   /**
    * Creates a real `Flow` upon receiving the first element. Internal `Flow` will not be created
-   * if there are no elements, because of completion or error.
-   * The materialized value of the `Flow` will be the materialized
-   * value of the created internal flow.
+   * if there are no elements, because of completion, cancellation, or error.
    *
-   * If `flowFactory` throws an exception and the supervision decision is
-   * [[akka.stream.Supervision.Stop]] the materialized value of the flow will be completed with
-   * the result of the `fallback`. For all other supervision options it will
-   * try to create flow with the next element.
-   *
-   * `fallback` will be executed when there was no elements and completed is received from upstream
-   * or when there was an exception either thrown by the `flowFactory` or during the internal flow
-   * materialization process.
-   *
-   * Adheres to the [[ActorAttributes.SupervisionStrategy]] attribute.
+   * The materialized value of the `Flow` is the value that is created by the `fallback` function.
    *
    * '''Emits when''' the internal flow is successfully created and it emits
    *
@@ -523,8 +534,29 @@ object Flow {
    *
    * '''Cancels when''' downstream cancels
    */
+  @Deprecated
+  @deprecated("Use lazyInitAsync instead. (lazyInitAsync returns a flow with a more useful materialized value.)", "2.5.12")
   def lazyInit[I, O, M](flowFactory: I ⇒ Future[Flow[I, O, M]], fallback: () ⇒ M): Flow[I, O, M] =
-    Flow.fromGraph(new LazyFlow[I, O, M](flowFactory, fallback))
+    Flow.fromGraph(new LazyFlow[I, O, M](flowFactory)).mapMaterializedValue(_ ⇒ fallback())
+
+  /**
+   * Creates a real `Flow` upon receiving the first element. Internal `Flow` will not be created
+   * if there are no elements, because of completion, cancellation, or error.
+   *
+   * The materialized value of the `Flow` is a `Future[Option[M]]` that is completed with `Some(mat)` when the internal
+   * flow gets materialized or with `None` when there where no elements. If the flow materialization (including
+   * the call of the `flowFactory`) fails then the future is completed with a failure.
+   *
+   * '''Emits when''' the internal flow is successfully created and it emits
+   *
+   * '''Backpressures when''' the internal flow is successfully created and it backpressures
+   *
+   * '''Completes when''' upstream completes and all elements have been emitted from the internal flow
+   *
+   * '''Cancels when''' downstream cancels
+   */
+  def lazyInitAsync[I, O, M](flowFactory: () ⇒ Future[Flow[I, O, M]]): Flow[I, O, Future[Option[M]]] =
+    Flow.fromGraph(new LazyFlow[I, O, M](_ ⇒ flowFactory()))
 }
 
 object RunnableGraph {
@@ -628,7 +660,7 @@ trait FlowOps[+Out, +Mat] {
   /**
    * Recover allows to send last element on failure and gracefully complete the stream
    * Since the underlying failure signal onError arrives out-of-band, it might jump over existing elements.
-   * This stage can recover the failure signal, but not the skipped elements, which will be dropped.
+   * This operator can recover the failure signal, but not the skipped elements, which will be dropped.
    *
    * Throwing an exception inside `recover` _will_ be logged on ERROR level automatically.
    *
@@ -649,7 +681,7 @@ trait FlowOps[+Out, +Mat] {
    * Source may be materialized.
    *
    * Since the underlying failure signal onError arrives out-of-band, it might jump over existing elements.
-   * This stage can recover the failure signal, but not the skipped elements, which will be dropped.
+   * This operator can recover the failure signal, but not the skipped elements, which will be dropped.
    *
    * Throwing an exception inside `recoverWith` _will_ be logged on ERROR level automatically.
    *
@@ -676,7 +708,7 @@ trait FlowOps[+Out, +Mat] {
    * A negative `attempts` number is interpreted as "infinite", which results in the exact same behavior as `recoverWith`.
    *
    * Since the underlying failure signal onError arrives out-of-band, it might jump over existing elements.
-   * This stage can recover the failure signal, but not the skipped elements, which will be dropped.
+   * This operator can recover the failure signal, but not the skipped elements, which will be dropped.
    *
    * Throwing an exception inside `recoverWithRetries` _will_ be logged on ERROR level automatically.
    *
@@ -697,14 +729,14 @@ trait FlowOps[+Out, +Mat] {
     via(new RecoverWith(attempts, pf))
 
   /**
-   * While similar to [[recover]] this stage can be used to transform an error signal to a different one *without* logging
+   * While similar to [[recover]] this operator can be used to transform an error signal to a different one *without* logging
    * it as an error in the process. So in that sense it is NOT exactly equivalent to `recover(t => throw t2)` since recover
    * would log the `t2` error.
    *
    * Since the underlying failure signal onError arrives out-of-band, it might jump over existing elements.
-   * This stage can recover the failure signal, but not the skipped elements, which will be dropped.
+   * This operator can recover the failure signal, but not the skipped elements, which will be dropped.
    *
-   * Similarily to [[recover]] throwing an exception inside `mapError` _will_ be logged.
+   * Similarly to [[recover]] throwing an exception inside `mapError` _will_ be logged.
    *
    * '''Emits when''' element is available from the upstream or upstream is failed and pf returns an element
    *
@@ -733,6 +765,32 @@ trait FlowOps[+Out, +Mat] {
    *
    */
   def map[T](f: Out ⇒ T): Repr[T] = via(Map(f))
+
+  /**
+   * This is a simplified version of `wireTap(Sink)` that takes only a simple function.
+   * Elements will be passed into this "side channel" function, and any of its results will be ignored.
+   *
+   * If the wire-tap operation is slow (it backpressures), elements that would've been sent to it will be dropped instead.
+   * It is similar to [[#alsoTo]] which does backpressure instead of dropping elements.
+   *
+   * This operation is useful for inspecting the passed through element, usually by means of side-effecting
+   * operations (such as `println`, or emitting metrics), for each element without having to modify it.
+   *
+   * For logging signals (elements, completion, error) consider using the [[log]] operator instead,
+   * along with appropriate `ActorAttributes.logLevels`.
+   *
+   * '''Emits when''' upstream emits an element; the same element will be passed to the attached function,
+   *                  as well as to the downstream operator
+   *
+   * '''Backpressures when''' downstream backpressures
+   *
+   * '''Completes when''' upstream completes
+   *
+   * '''Cancels when''' downstream cancels
+   *
+   */
+  def wireTap(f: Out ⇒ Unit): Repr[Out] =
+    wireTap(Sink.foreach(f)).named("wireTap")
 
   /**
    * Transform each input element into an `Iterable` of output elements that is
@@ -812,7 +870,9 @@ trait FlowOps[+Out, +Mat] {
    *
    * @see [[#mapAsyncUnordered]]
    */
-  def mapAsync[T](parallelism: Int)(f: Out ⇒ Future[T]): Repr[T] = via(MapAsync(parallelism, f))
+  def mapAsync[T](parallelism: Int)(f: Out ⇒ Future[T]): Repr[T] =
+    if (parallelism == 1) mapAsyncUnordered[T](parallelism = 1)(f) // optimization for parallelism 1
+    else via(MapAsync(parallelism, f))
 
   /**
    * Transform this stream by applying the given function to each of the elements
@@ -863,12 +923,10 @@ trait FlowOps[+Out, +Mat] {
    * still be in the mailbox, so defaulting to sending the second one a bit earlier than when first ask has replied maintains
    * a slightly healthier throughput.
    *
-   * The mapTo class parameter is used to cast the incoming responses to the expected response type.
-   *
    * Similar to the plain ask pattern, the target actor is allowed to reply with `akka.util.Status`.
-   * An `akka.util.Status#Failure` will cause the stage to fail with the cause carried in the `Failure` message.
+   * An `akka.util.Status#Failure` will cause the operator to fail with the cause carried in the `Failure` message.
    *
-   * The stage fails with an [[akka.stream.WatchedActorTerminatedException]] if the target actor is terminated.
+   * The operator fails with an [[akka.stream.WatchedActorTerminatedException]] if the target actor is terminated.
    *
    * Adheres to the [[ActorAttributes.SupervisionStrategy]] attribute.
    *
@@ -882,7 +940,7 @@ trait FlowOps[+Out, +Mat] {
    *
    * '''Cancels when''' downstream cancels
    */
-  @implicitNotFound("Missing an implicit akka.util.Timeout for the ask() stage")
+  @implicitNotFound("Missing an implicit akka.util.Timeout for the ask() operator")
   def ask[S](ref: ActorRef)(implicit timeout: Timeout, tag: ClassTag[S]): Repr[S] =
     ask(2)(ref)(timeout, tag)
 
@@ -899,15 +957,11 @@ trait FlowOps[+Out, +Mat] {
    * otherwise `Nothing` will be assumed, which is most likely not what you want.
    *
    * Parallelism limits the number of how many asks can be "in flight" at the same time.
-   * Please note that the elements emitted by this stage are in-order with regards to the asks being issued
+   * Please note that the elements emitted by this operator are in-order with regards to the asks being issued
    * (i.e. same behaviour as mapAsync).
    *
-   * The mapTo class parameter is used to cast the incoming responses to the expected response type.
-   *
-   * Similar to the plain ask pattern, the target actor is allowed to reply with `akka.util.Status`.
-   * An `akka.util.Status#Failure` will cause the stage to fail with the cause carried in the `Failure` message.
-   *
-   * The stage fails with an [[akka.stream.WatchedActorTerminatedException]] if the target actor is terminated.
+   * The operator fails with an [[akka.stream.WatchedActorTerminatedException]] if the target actor is terminated,
+   * or with an [[java.util.concurrent.TimeoutException]] in case the ask exceeds the timeout passed in.
    *
    * Adheres to the [[ActorAttributes.SupervisionStrategy]] attribute.
    *
@@ -921,14 +975,14 @@ trait FlowOps[+Out, +Mat] {
    *
    * '''Cancels when''' downstream cancels
    */
-  @implicitNotFound("Missing an implicit akka.util.Timeout for the ask() stage")
+  @implicitNotFound("Missing an implicit akka.util.Timeout for the ask() operator")
   def ask[S](parallelism: Int)(ref: ActorRef)(implicit timeout: Timeout, tag: ClassTag[S]): Repr[S] = {
     val askFlow = Flow[Out]
       .watch(ref)
       .mapAsync(parallelism) { el ⇒
         akka.pattern.ask(ref).?(el)(timeout).mapTo[S](tag)
       }
-      .recover[S] {
+      .mapError {
         // the purpose of this recovery is to change the name of the stage in that exception
         // we do so in order to help users find which stage caused the failure -- "the ask stage"
         case ex: WatchedActorTerminatedException ⇒
@@ -940,7 +994,7 @@ trait FlowOps[+Out, +Mat] {
   }
 
   /**
-   * The stage fails with an [[akka.stream.WatchedActorTerminatedException]] if the target actor is terminated.
+   * The operator fails with an [[akka.stream.WatchedActorTerminatedException]] if the target actor is terminated.
    *
    * '''Emits when''' upstream emits
    *
@@ -1176,6 +1230,8 @@ trait FlowOps[+Out, +Mat] {
    *
    * Adheres to the [[ActorAttributes.SupervisionStrategy]] attribute.
    *
+   * Note that the `zero` value must be immutable.
+   *
    * '''Emits when''' the function scanning the element returns a new element
    *
    * '''Backpressures when''' downstream backpressures
@@ -1204,6 +1260,8 @@ trait FlowOps[+Out, +Mat] {
    *
    * Adheres to the [[ActorAttributes.SupervisionStrategy]] attribute.
    *
+   * Note that the `zero` value must be immutable.
+   *
    * '''Emits when''' the future returned by f` completes
    *
    * '''Backpressures when''' downstream backpressures
@@ -1226,6 +1284,8 @@ trait FlowOps[+Out, +Mat] {
    * the stream will continue.
    *
    * Adheres to the [[ActorAttributes.SupervisionStrategy]] attribute.
+   *
+   * Note that the `zero` value must be immutable.
    *
    * '''Emits when''' upstream completes
    *
@@ -1250,6 +1310,8 @@ trait FlowOps[+Out, +Mat] {
    * [[akka.stream.Supervision.Restart]] current value starts at `zero` again
    * the stream will continue.
    *
+   * Note that the `zero` value must be immutable.
+   *
    * '''Emits when''' upstream completes
    *
    * '''Backpressures when''' downstream backpressures
@@ -1268,7 +1330,7 @@ trait FlowOps[+Out, +Mat] {
    * yielding the next current value.
    *
    * If the stream is empty (i.e. completes before signalling any elements),
-   * the reduce stage will fail its downstream with a [[NoSuchElementException]],
+   * the reduce operator will fail its downstream with a [[NoSuchElementException]],
    * which is semantically in-line with that Scala's standard library collections
    * do in such situations.
    *
@@ -1600,7 +1662,7 @@ trait FlowOps[+Out, +Mat] {
     via(Batch(max, costFn, seed, aggregate).withAttributes(DefaultAttributes.batchWeighted))
 
   /**
-   * Allows a faster downstream to progress independently of a slower publisher by extrapolating elements from an older
+   * Allows a faster downstream to progress independently of a slower upstream by extrapolating elements from an older
    * element until new element comes from the upstream. For example an expand step might repeat the last element for
    * the subscriber until it receives an update from upstream.
    *
@@ -1609,7 +1671,7 @@ trait FlowOps[+Out, +Mat] {
    * subscriber.
    *
    * Expand does not support [[akka.stream.Supervision.Restart]] and [[akka.stream.Supervision.Resume]].
-   * Exceptions from the `seed` or `extrapolate` functions will complete the stream with failure.
+   * Exceptions from the `seed` function will complete the stream with failure.
    *
    * '''Emits when''' downstream stops backpressuring
    *
@@ -1619,11 +1681,43 @@ trait FlowOps[+Out, +Mat] {
    *
    * '''Cancels when''' downstream cancels
    *
-   * @param seed Provides the first state for extrapolation using the first unconsumed element
-   * @param extrapolate Takes the current extrapolation state to produce an output element and the next extrapolation
-   *                    state.
+   * @param expander       Takes the current extrapolation state to produce an output element and the next extrapolation
+   *                       state.
+   * @see [[#extrapolate]] for a version that always preserves the original element and allows for an initial "startup"
+   *                       element.
    */
-  def expand[U](extrapolate: Out ⇒ Iterator[U]): Repr[U] = via(new Expand(extrapolate))
+  def expand[U](expander: Out ⇒ Iterator[U]): Repr[U] = via(new Expand(expander))
+
+  /**
+   * Allows a faster downstream to progress independent of a slower upstream.
+   *
+   * This is achieved by introducing "extrapolated" elements - based on those from upstream - whenever downstream
+   * signals demand.
+   *
+   * Extrapolate does not support [[akka.stream.Supervision.Restart]] and [[akka.stream.Supervision.Resume]].
+   * Exceptions from the `extrapolate` function will complete the stream with failure.
+   *
+   * '''Emits when''' downstream stops backpressuring, AND EITHER upstream emits OR initial element is present OR
+   * `extrapolate` is non-empty and applicable
+   *
+   * '''Backpressures when''' downstream backpressures or current `extrapolate` runs empty
+   *
+   * '''Completes when''' upstream completes and current `extrapolate` runs empty
+   *
+   * '''Cancels when''' downstream cancels
+   *
+   * @param extrapolator takes the current upstream element and provides a sequence of "extrapolated" elements based
+   *                    on the original, to be emitted in case downstream signals demand.
+   * @param initial the initial element to be emitted, in case upstream is able to stall the entire stream.
+   * @see [[#expand]]    for a version that can overwrite the original element.
+   */
+  def extrapolate[U >: Out](extrapolator: U ⇒ Iterator[U], initial: Option[U] = None): Repr[U] = {
+    val expandArg = (u: U) ⇒ Iterator.single(u) ++ extrapolator(u)
+
+    val expandStep = new Expand[U, U](expandArg)
+
+    initial.map(e ⇒ prepend(Source.single(e)).via(expandStep)).getOrElse(via(expandStep))
+  }
 
   /**
    * Adds a fixed size buffer in the flow that allows to store elements from a faster upstream until it becomes full.
@@ -1679,8 +1773,17 @@ trait FlowOps[+Out, +Mat] {
    * a new substream is opened and subsequently fed with all elements belonging to
    * that key.
    *
+   * WARNING: If `allowClosedSubstreamRecreation` is set to `false` (default behavior) the operator
+   * keeps track of all keys of streams that have already been closed. If you expect an infinite
+   * number of keys this can cause memory issues. Elements belonging to those keys are drained
+   * directly and not send to the substream.
+   *
+   * Note: If `allowClosedSubstreamRecreation` is set to `true` substream completion and incoming
+   * elements are subject to race-conditions. If elements arrive for a stream that is in the process
+   * of closing these elements might get lost.
+   *
    * The object returned from this method is not a normal [[Source]] or [[Flow]],
-   * it is a [[SubFlow]]. This means that after this combinator all transformations
+   * it is a [[SubFlow]]. This means that after this operator all transformations
    * are applied to all encountered substreams in the same fashion. Substream mode
    * is exited either by closing the substream (i.e. connecting it to a [[Sink]])
    * or by merging the substreams back together; see the `to` and `mergeBack` methods
@@ -1714,19 +1817,37 @@ trait FlowOps[+Out, +Mat] {
    *
    * @param maxSubstreams configures the maximum number of substreams (keys)
    *        that are supported; if more distinct keys are encountered then the stream fails
+   * @param f computes the key for each element
+   * @param allowClosedSubstreamRecreation enables recreation of already closed substreams if elements with their
+   *        corresponding keys arrive after completion
    */
-  def groupBy[K](maxSubstreams: Int, f: Out ⇒ K): SubFlow[Out, Mat, Repr, Closed] = {
+  def groupBy[K](maxSubstreams: Int, f: Out ⇒ K, allowClosedSubstreamRecreation: Boolean): SubFlow[Out, Mat, Repr, Closed] = {
     val merge = new SubFlowImpl.MergeBack[Out, Repr] {
       override def apply[T](flow: Flow[Out, T, NotUsed], breadth: Int): Repr[T] =
-        via(new GroupBy(maxSubstreams, f))
+        via(new GroupBy(maxSubstreams, f, allowClosedSubstreamRecreation))
           .map(_.via(flow))
           .via(new FlattenMerge(breadth))
     }
     val finish: (Sink[Out, NotUsed]) ⇒ Closed = s ⇒
-      via(new GroupBy(maxSubstreams, f))
+      via(new GroupBy(maxSubstreams, f, allowClosedSubstreamRecreation))
         .to(Sink.foreach(_.runWith(s)(GraphInterpreter.currentInterpreter.materializer)))
     new SubFlowImpl(Flow[Out], merge, finish)
   }
+
+  /**
+   * This operation demultiplexes the incoming stream into separate output
+   * streams, one for each element key. The key is computed for each element
+   * using the given function. When a new key is encountered for the first time
+   * a new substream is opened and subsequently fed with all elements belonging to
+   * that key.
+   *
+   * WARNING: The operator keeps track of all keys of streams that have already been closed.
+   * If you expect an infinite number of keys this can cause memory issues. Elements belonging
+   * to those keys are drained directly and not send to the substream.
+   *
+   * @see [[#groupBy]]
+   */
+  def groupBy[K](maxSubstreams: Int, f: Out ⇒ K): SubFlow[Out, Mat, Repr, Closed] = groupBy(maxSubstreams, f, false)
 
   /**
    * This operation applies the given predicate to all incoming elements and
@@ -1750,7 +1871,7 @@ trait FlowOps[+Out, +Mat] {
    * }}}
    *
    * The object returned from this method is not a normal [[Source]] or [[Flow]],
-   * it is a [[SubFlow]]. This means that after this combinator all transformations
+   * it is a [[SubFlow]]. This means that after this operator all transformations
    * are applied to all encountered substreams in the same fashion. Substream mode
    * is exited either by closing the substream (i.e. connecting it to a [[Sink]])
    * or by merging the substreams back together; see the `to` and `mergeBack` methods
@@ -1820,7 +1941,7 @@ trait FlowOps[+Out, +Mat] {
    * }}}
    *
    * The object returned from this method is not a normal [[Source]] or [[Flow]],
-   * it is a [[SubFlow]]. This means that after this combinator all transformations
+   * it is a [[SubFlow]]. This means that after this operator all transformations
    * are applied to all encountered substreams in the same fashion. Substream mode
    * is exited either by closing the substream (i.e. connecting it to a [[Sink]])
    * or by merging the substreams back together; see the `to` and `mergeBack` methods
@@ -1906,7 +2027,7 @@ trait FlowOps[+Out, +Mat] {
   def flatMapMerge[T, M](breadth: Int, f: Out ⇒ Graph[SourceShape[T], M]): Repr[T] = map(f).via(new FlattenMerge[T, M](breadth))
 
   /**
-   * If the first element has not passed through this stage before the provided timeout, the stream is failed
+   * If the first element has not passed through this operator before the provided timeout, the stream is failed
    * with a [[scala.concurrent.TimeoutException]].
    *
    * '''Emits when''' upstream emits an element
@@ -1965,7 +2086,7 @@ trait FlowOps[+Out, +Mat] {
 
   /**
    * Injects additional elements if upstream does not emit for a configured amount of time. In other words, this
-   * stage attempts to maintains a base rate of emitted elements towards the downstream.
+   * operator attempts to maintains a base rate of emitted elements towards the downstream.
    *
    * If the downstream backpressures then no element is injected until downstream demand arrives. Injected elements
    * do not accumulate during this period.
@@ -1984,8 +2105,40 @@ trait FlowOps[+Out, +Mat] {
     via(new Timers.IdleInject[Out, U](maxIdle, injectedElem))
 
   /**
-   * Sends elements downstream with speed limited to `elements/per`. In other words, this stage set the maximum rate
-   * for emitting messages. This combinator works for streams where all elements have the same cost or length.
+   * Sends elements downstream with speed limited to `elements/per`. In other words, this operator set the maximum rate
+   * for emitting messages. This operator works for streams where all elements have the same cost or length.
+   *
+   * Throttle implements the token bucket model. There is a bucket with a given token capacity (burst size).
+   * Tokens drops into the bucket at a given rate and can be `spared` for later use up to bucket capacity
+   * to allow some burstiness. Whenever stream wants to send an element, it takes as many
+   * tokens from the bucket as element costs. If there isn't any, throttle waits until the
+   * bucket accumulates enough tokens. Elements that costs more than the allowed burst will be delayed proportionally
+   * to their cost minus available tokens, meeting the target rate. Bucket is full when stream just materialized and
+   * started.
+   *
+   * The burst size is calculated based on the given rate (`cost/per`) as 0.1 * rate, for example:
+   * - rate < 20/second => burst size 1
+   * - rate 20/second => burst size 2
+   * - rate 100/second => burst size 10
+   * - rate 200/second => burst size 20
+   *
+   * The throttle `mode` is [[akka.stream.ThrottleMode.Shaping]], which makes pauses before emitting messages to
+   * meet throttle rate.
+   *
+   * '''Emits when''' upstream emits an element and configured time per each element elapsed
+   *
+   * '''Backpressures when''' downstream backpressures or the incoming rate is higher than the speed limit
+   *
+   * '''Completes when''' upstream completes
+   *
+   * '''Cancels when''' downstream cancels
+   */
+  def throttle(elements: Int, per: FiniteDuration): Repr[Out] =
+    throttle(elements, per, maximumBurst = Throttle.AutomaticMaximumBurst, ConstantFun.oneInt, ThrottleMode.Shaping)
+
+  /**
+   * Sends elements downstream with speed limited to `elements/per`. In other words, this operator set the maximum rate
+   * for emitting messages. This operator works for streams where all elements have the same cost or length.
    *
    * Throttle implements the token bucket model. There is a bucket with a given token capacity (burst size or maximumBurst).
    * Tokens drops into the bucket at a given rate and can be `spared` for later use up to bucket capacity
@@ -2005,10 +2158,11 @@ trait FlowOps[+Out, +Mat] {
    *
    *  WARNING: Be aware that throttle is using scheduler to slow down the stream. This scheduler has minimal time of triggering
    *  next push. Consequently it will slow down the stream as it has minimal pause for emitting. This can happen in
-   *  case burst is 0 and speed is higher than 30 events per second. You need to consider another solution in case you are expecting
-   *  events being evenly spread with some small interval (30 milliseconds or less).
-   *  In other words the throttler always enforces the rate limit, but in certain cases (mostly due to limited scheduler resolution) it
-   *  enforces a tighter bound than what was prescribed. This can be also mitigated by increasing the burst size.
+   *  case burst is 0 and speed is higher than 30 events per second. You need to increase the `maximumBurst`  if
+   *  elements arrive with small interval (30 milliseconds or less). Use the overloaded `throttle` method without
+   *  `maximumBurst` parameter to automatically calculate the `maximumBurst` based on the given rate (`cost/per`).
+   *  In other words the throttler always enforces the rate limit when `maximumBurst` parameter is given, but in
+   *  certain cases (mostly due to limited scheduler resolution) it enforces a tighter bound than what was prescribed.
    *
    * '''Emits when''' upstream emits an element and configured time per each element elapsed
    *
@@ -2018,7 +2172,6 @@ trait FlowOps[+Out, +Mat] {
    *
    * '''Cancels when''' downstream cancels
    *
-   * @see [[#throttleEven]]
    */
   def throttle(elements: Int, per: FiniteDuration, maximumBurst: Int, mode: ThrottleMode): Repr[Out] =
     throttle(elements, per, maximumBurst, ConstantFun.oneInt, mode)
@@ -2026,7 +2179,42 @@ trait FlowOps[+Out, +Mat] {
   /**
    * Sends elements downstream with speed limited to `cost/per`. Cost is
    * calculating for each element individually by calling `calculateCost` function.
-   * This combinator works for streams when elements have different cost(length).
+   * This operator works for streams when elements have different cost(length).
+   * Streams of `ByteString` for example.
+   *
+   * Throttle implements the token bucket model. There is a bucket with a given token capacity (burst size).
+   * Tokens drops into the bucket at a given rate and can be `spared` for later use up to bucket capacity
+   * to allow some burstiness. Whenever stream wants to send an element, it takes as many
+   * tokens from the bucket as element costs. If there isn't any, throttle waits until the
+   * bucket accumulates enough tokens. Elements that costs more than the allowed burst will be delayed proportionally
+   * to their cost minus available tokens, meeting the target rate. Bucket is full when stream just materialized and
+   * started.
+   *
+   * The burst size is calculated based on the given rate (`cost/per`) as 0.1 * rate, for example:
+   * - rate < 20/second => burst size 1
+   * - rate 20/second => burst size 2
+   * - rate 100/second => burst size 10
+   * - rate 200/second => burst size 20
+   *
+   * The throttle `mode` is [[akka.stream.ThrottleMode.Shaping]], which makes pauses before emitting messages to
+   * meet throttle rate.
+   *
+   * '''Emits when''' upstream emits an element and configured time per each element elapsed
+   *
+   * '''Backpressures when''' downstream backpressures or the incoming rate is higher than the speed limit
+   *
+   * '''Completes when''' upstream completes
+   *
+   * '''Cancels when''' downstream cancels
+   *
+   */
+  def throttle(cost: Int, per: FiniteDuration, costCalculation: (Out) ⇒ Int): Repr[Out] =
+    via(new Throttle(cost, per, Throttle.AutomaticMaximumBurst, costCalculation, ThrottleMode.Shaping))
+
+  /**
+   * Sends elements downstream with speed limited to `cost/per`. Cost is
+   * calculating for each element individually by calling `calculateCost` function.
+   * This operator works for streams when elements have different cost(length).
    * Streams of `ByteString` for example.
    *
    * Throttle implements the token bucket model. There is a bucket with a given token capacity (burst size or maximumBurst).
@@ -2047,10 +2235,11 @@ trait FlowOps[+Out, +Mat] {
    *
    *  WARNING: Be aware that throttle is using scheduler to slow down the stream. This scheduler has minimal time of triggering
    *  next push. Consequently it will slow down the stream as it has minimal pause for emitting. This can happen in
-   *  case burst is 0 and speed is higher than 30 events per second. You need to consider another solution in case you are expecting
-   *  events being evenly spread with some small interval (30 milliseconds or less).
-   *  In other words the throttler always enforces the rate limit, but in certain cases (mostly due to limited scheduler resolution) it
-   *  enforces a tighter bound than what was prescribed. This can be also mitigated by increasing the burst size.
+   *  case burst is 0 and speed is higher than 30 events per second. You need to increase the `maximumBurst`  if
+   *  elements arrive with small interval (30 milliseconds or less). Use the overloaded `throttle` method without
+   *  `maximumBurst` parameter to automatically calculate the `maximumBurst` based on the given rate (`cost/per`).
+   *  In other words the throttler always enforces the rate limit when `maximumBurst` parameter is given, but in
+   *  certain cases (mostly due to limited scheduler resolution) it enforces a tighter bound than what was prescribed.
    *
    * '''Emits when''' upstream emits an element and configured time per each element elapsed
    *
@@ -2060,7 +2249,6 @@ trait FlowOps[+Out, +Mat] {
    *
    * '''Cancels when''' downstream cancels
    *
-   * @see [[#throttleEven]]
    */
   def throttle(cost: Int, per: FiniteDuration, maximumBurst: Int,
                costCalculation: (Out) ⇒ Int, mode: ThrottleMode): Repr[Out] =
@@ -2070,29 +2258,33 @@ trait FlowOps[+Out, +Mat] {
    * This is a simplified version of throttle that spreads events evenly across the given time interval. throttleEven using
    * best effort approach to meet throttle rate.
    *
-   * Use this combinator when you need just slow down a stream without worrying about exact amount
+   * Use this operator when you need just slow down a stream without worrying about exact amount
    * of time between events.
    *
    * If you want to be sure that no time interval has no more than specified number of events you need to use
    * [[throttle()]] with maximumBurst attribute.
    * @see [[#throttle]]
    */
+  @Deprecated
+  @deprecated("Use throttle without `maximumBurst` parameter instead.", "2.5.12")
   def throttleEven(elements: Int, per: FiniteDuration, mode: ThrottleMode): Repr[Out] =
-    throttle(elements, per, Int.MaxValue, ConstantFun.oneInt, mode)
+    throttle(elements, per, Throttle.AutomaticMaximumBurst, ConstantFun.oneInt, mode)
 
   /**
    * This is a simplified version of throttle that spreads events evenly across the given time interval.
    *
-   * Use this combinator when you need just slow down a stream without worrying about exact amount
+   * Use this operator when you need just slow down a stream without worrying about exact amount
    * of time between events.
    *
    * If you want to be sure that no time interval has no more than specified number of events you need to use
    * [[throttle()]] with maximumBurst attribute.
    * @see [[#throttle]]
    */
+  @Deprecated
+  @deprecated("Use throttle without `maximumBurst` parameter instead.", "2.5.12")
   def throttleEven(cost: Int, per: FiniteDuration,
                    costCalculation: (Out) ⇒ Int, mode: ThrottleMode): Repr[Out] =
-    via(new Throttle(cost, per, Int.MaxValue, costCalculation, mode))
+    throttle(cost, per, Throttle.AutomaticMaximumBurst, costCalculation, mode)
 
   /**
    * Detaches upstream demand from downstream demand without detaching the
@@ -2164,6 +2356,31 @@ trait FlowOps[+Out, +Mat] {
     }
 
   /**
+   * Combine the elements of 2 streams into a stream of tuples, picking always the latest element of each.
+   *
+   * A `ZipLatest` has a `left` and a `right` input port and one `out` port.
+   *
+   * No element is emitted until at least one element from each Source becomes available.
+   *
+   * '''Emits when''' all of the inputs have at least an element available, and then each time an element becomes
+   *  available on either of the inputs
+   *
+   * '''Backpressures when''' downstream backpressures
+   *
+   * '''Completes when''' any upstream completes
+   *
+   * '''Cancels when''' downstream cancels
+   */
+  def zipLatest[U](that: Graph[SourceShape[U], _]): Repr[(Out, U)] = via(zipLatestGraph(that))
+
+  protected def zipLatestGraph[U, M](that: Graph[SourceShape[U], M]): Graph[FlowShape[Out @uncheckedVariance, (Out, U)], M] =
+    GraphDSL.create(that) { implicit b ⇒ r ⇒
+      val zip = b.add(ZipLatest[Out, U]())
+      r ~> zip.in1
+      FlowShape(zip.in0, zip.out)
+    }
+
+  /**
    * Put together the elements of current flow and the given [[Source]]
    * into a stream of combined elements using a combiner function.
    *
@@ -2181,6 +2398,33 @@ trait FlowOps[+Out, +Mat] {
   protected def zipWithGraph[Out2, Out3, M](that: Graph[SourceShape[Out2], M])(combine: (Out, Out2) ⇒ Out3): Graph[FlowShape[Out @uncheckedVariance, Out3], M] =
     GraphDSL.create(that) { implicit b ⇒ r ⇒
       val zip = b.add(ZipWith[Out, Out2, Out3](combine))
+      r ~> zip.in1
+      FlowShape(zip.in0, zip.out)
+    }
+
+  /**
+   * Combine the elements of multiple streams into a stream of combined elements using a combiner function,
+   * picking always the latest of the elements of each source.
+   *
+   * No element is emitted until at least one element from each Source becomes available. Whenever a new
+   * element appears, the zipping function is invoked with a tuple containing the new element
+   * and the other last seen elements.
+   *
+   *   '''Emits when''' all of the inputs have at least an element available, and then each time an element becomes
+   *   available on either of the inputs
+   *
+   *   '''Backpressures when''' downstream backpressures
+   *
+   *   '''Completes when''' any of the upstreams completes
+   *
+   *   '''Cancels when''' downstream cancels
+   */
+  def zipLatestWith[Out2, Out3](that: Graph[SourceShape[Out2], _])(combine: (Out, Out2) ⇒ Out3): Repr[Out3] =
+    via(zipLatestWithGraph(that)(combine))
+
+  protected def zipLatestWithGraph[Out2, Out3, M](that: Graph[SourceShape[Out2], M])(combine: (Out, Out2) ⇒ Out3): Graph[FlowShape[Out @uncheckedVariance, Out3], M] =
+    GraphDSL.create(that) { implicit b ⇒ r ⇒
+      val zip = b.add(ZipLatestWith[Out, Out2, Out3](combine))
       r ~> zip.in1
       FlowShape(zip.in0, zip.out)
     }
@@ -2240,7 +2484,7 @@ trait FlowOps[+Out, +Mat] {
    * source, then repeat process.
    *
    * If eagerClose is false and one of the upstreams complete the elements from the other upstream will continue passing
-   * through the interleave stage. If eagerClose is true and one of the upstream complete interleave will cancel the
+   * through the interleave operator. If eagerClose is true and one of the upstream complete interleave will cancel the
    * other upstream and complete itself.
    *
    * If it gets error from one of upstreams - stream completes with failure.
@@ -2379,7 +2623,7 @@ trait FlowOps[+Out, +Mat] {
    * from producing elements by asserting back-pressure until its time comes or it gets
    * cancelled.
    *
-   * On errors the stage is failed regardless of source of the error.
+   * On errors the operator is failed regardless of source of the error.
    *
    * '''Emits when''' element is available from first stream or first stream closed without emitting any elements and an element
    *                  is available from the second stream
@@ -2439,6 +2683,8 @@ trait FlowOps[+Out, +Mat] {
    * Attaches the given [[Sink]] to this [[Flow]], meaning that elements that pass
    * through will also be sent to the [[Sink]].
    *
+   * It is similar to [[#wireTap]] but will backpressure instead of dropping elements when the given [[Sink]] is not ready.
+   *
    * '''Emits when''' element is available and demand exists both from the Sink and the downstream.
    *
    * '''Backpressures when''' downstream or Sink backpressures
@@ -2483,6 +2729,8 @@ trait FlowOps[+Out, +Mat] {
    * Attaches the given [[Sink]] to this [[Flow]] as a wire tap, meaning that elements that pass
    * through will also be sent to the wire-tap Sink, without the latter affecting the mainline flow.
    * If the wire-tap Sink backpressures, elements that would've been sent to it will be dropped instead.
+   *
+   * It is similar to [[#alsoTo]] which does backpressure instead of dropping elements.
    *
    * '''Emits when''' element is available and demand exists from the downstream; the element will
    * also be sent to the wire-tap Sink if there is demand.
@@ -2608,6 +2856,30 @@ trait FlowOpsMat[+Out, +Mat] extends FlowOps[Out, Mat] {
     viaMat(zipWithGraph(that)(combine))(matF)
 
   /**
+   * Combine the elements of current flow and the given [[Source]] into a stream of tuples,
+   * picking always the latest of the elements of each source.
+   *
+   * @see [[#zipLatest]].
+   *
+   * It is recommended to use the internally optimized `Keep.left` and `Keep.right` combiners
+   * where appropriate instead of manually writing functions that pass through one of the values.
+   */
+  def zipLatestMat[U, Mat2, Mat3](that: Graph[SourceShape[U], Mat2])(matF: (Mat, Mat2) ⇒ Mat3): ReprMat[(Out, U), Mat3] =
+    viaMat(zipLatestGraph(that))(matF)
+
+  /**
+   * Put together the elements of current flow and the given [[Source]]
+   * into a stream of combined elements using a combiner function, picking always the latest of the elements of each source.
+   *
+   * @see [[#zipLatestWith]].
+   *
+   * It is recommended to use the internally optimized `Keep.left` and `Keep.right` combiners
+   * where appropriate instead of manually writing functions that pass through one of the values.
+   */
+  def zipLatestWithMat[Out2, Out3, Mat2, Mat3](that: Graph[SourceShape[Out2], Mat2])(combine: (Out, Out2) ⇒ Out3)(matF: (Mat, Mat2) ⇒ Mat3): ReprMat[Out3, Mat3] =
+    viaMat(zipLatestWithGraph(that)(combine))(matF)
+
+  /**
    * Merge the given [[Source]] to this [[Flow]], taking elements as they arrive from input streams,
    * picking randomly when several elements ready.
    *
@@ -2642,7 +2914,7 @@ trait FlowOpsMat[+Out, +Mat] extends FlowOps[Out, Mat] {
    * then repeat process.
    *
    * If eagerClose is false and one of the upstreams complete the elements from the other upstream will continue passing
-   * through the interleave stage. If eagerClose is true and one of the upstream complete interleave will cancel the
+   * through the interleave operator. If eagerClose is true and one of the upstream complete interleave will cancel the
    * other upstream and complete itself.
    *
    * If it gets error from one of upstreams - stream completes with failure.
@@ -2715,7 +2987,7 @@ trait FlowOpsMat[+Out, +Mat] extends FlowOps[Out, Mat] {
    * from producing elements by asserting back-pressure until its time comes or it gets
    * cancelled.
    *
-   * On errors the stage is failed regardless of source of the error.
+   * On errors the operator is failed regardless of source of the error.
    *
    * '''Emits when''' element is available from first stream or first stream closed without emitting any elements and an element
    *                  is available from the second stream
@@ -2760,6 +3032,8 @@ trait FlowOpsMat[+Out, +Mat] extends FlowOps[Out, Mat] {
    * through will also be sent to the wire-tap Sink, without the latter affecting the mainline flow.
    * If the wire-tap Sink backpressures, elements that would've been sent to it will be dropped instead.
    *
+   * It is similar to [[#alsoToMat]] which does backpressure instead of dropping elements.
+   *
    * @see [[#wireTap]]
    *
    * It is recommended to use the internally optimized `Keep.left` and `Keep.right` combiners
@@ -2789,9 +3063,35 @@ trait FlowOpsMat[+Out, +Mat] extends FlowOps[Out, Mat] {
    * Materializes to `FlowMonitor[Out]` that allows monitoring of the current flow. All events are propagated
    * by the monitor unchanged. Note that the monitor inserts a memory barrier every time it processes an
    * event, and may therefor affect performance.
+   *
    * The `combine` function is used to combine the `FlowMonitor` with this flow's materialized value.
    */
+  @Deprecated
+  @deprecated("Use monitor() or monitorMat(combine) instead", "2.5.17")
   def monitor[Mat2]()(combine: (Mat, FlowMonitor[Out]) ⇒ Mat2): ReprMat[Out, Mat2] =
     viaMat(GraphStages.monitor)(combine)
+
+  /**
+   * Materializes to `FlowMonitor[Out]` that allows monitoring of the current flow. All events are propagated
+   * by the monitor unchanged. Note that the monitor inserts a memory barrier every time it processes an
+   * event, and may therefor affect performance.
+   *
+   * The `combine` function is used to combine the `FlowMonitor` with this flow's materialized value.
+   */
+  def monitorMat[Mat2](combine: (Mat, FlowMonitor[Out]) ⇒ Mat2): ReprMat[Out, Mat2] =
+    viaMat(GraphStages.monitor)(combine)
+
+  /**
+   * Materializes to `(Mat, FlowMonitor[Out])`, which is unlike most other operators (!),
+   * in which usually the default materialized value keeping semantics is to keep the left value
+   * (by passing `Keep.left()` to a `*Mat` version of a method). This operator is an exception from
+   * that rule and keeps both values since dropping its sole purpose is to introduce that materialized value.
+   *
+   * The `FlowMonitor[Out]` allows monitoring of the current flow. All events are propagated
+   * by the monitor unchanged. Note that the monitor inserts a memory barrier every time it processes an
+   * event, and may therefor affect performance.
+   */
+  def monitor: ReprMat[Out, (Mat, FlowMonitor[Out])] =
+    monitorMat(Keep.both)
 
 }

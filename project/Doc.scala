@@ -1,16 +1,19 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka
 
 import sbt._
-import sbtunidoc.BaseUnidocPlugin.autoImport.{ unidoc, unidocProjectFilter }
+import sbtunidoc.BaseUnidocPlugin.autoImport.{unidoc, unidocProjectFilter}
 import sbtunidoc.JavaUnidocPlugin.autoImport.JavaUnidoc
 import sbtunidoc.ScalaUnidocPlugin.autoImport.ScalaUnidoc
-import sbtunidoc.GenJavadocPlugin.autoImport.Genjavadoc
+import sbtunidoc.GenJavadocPlugin.autoImport._
 import sbt.Keys._
 import sbt.File
 import scala.annotation.tailrec
+
+import sbt.ScopeFilter.ProjectFilter
 
 object Scaladoc extends AutoPlugin {
 
@@ -27,6 +30,8 @@ object Scaladoc extends AutoPlugin {
   override lazy val projectSettings = {
     inTask(doc)(Seq(
       scalacOptions in Compile ++= scaladocOptions(version.value, (baseDirectory in ThisBuild).value),
+      // -release caused build failures when generating javadoc:
+      scalacOptions in Compile --= Seq("-release", "8"),
       autoAPIMappings := CliOptions.scaladocAutoAPI.get)) ++
       Seq(validateDiagrams in Compile := true) ++
       CliOptions.scaladocDiagramsEnabled.ifTrue(doc in Compile := {
@@ -56,7 +61,10 @@ object Scaladoc extends AutoPlugin {
           if (name.endsWith(".html") && !name.startsWith("index-") &&
             !name.equals("index.html") && !name.equals("package.html")) {
             val source = scala.io.Source.fromFile(f)(scala.io.Codec.UTF8)
-            val hd = try source.getLines().exists(_.contains("<div class=\"toggleContainer block diagram-container\" id=\"inheritance-diagram-container\">"))
+            val hd = try source.getLines().exists(lines =>
+              lines.contains("<div class=\"toggleContainer block diagram-container\" id=\"inheritance-diagram-container\">") ||
+              lines.contains("<svg id=\"graph")
+            )
             catch {
               case e: Exception ⇒ throw new IllegalStateException("Scaladoc verification failed for file '" + f + "'", e)
             } finally source.close()
@@ -97,7 +105,7 @@ object UnidocRoot extends AutoPlugin {
   }
 
   object autoImport {
-    val unidocRootIgnoreProjects = settingKey[Seq[Project]]("Projects to ignore when generating unidoc")
+    val unidocRootIgnoreProjects = settingKey[Seq[ProjectReference]]("Projects to ignore when generating unidoc")
   }
   import autoImport._
 
@@ -110,7 +118,7 @@ object UnidocRoot extends AutoPlugin {
     Seq(javacOptions in (JavaUnidoc, unidoc) := Seq("-Xdoclint:none"))).getOrElse(Nil)
 
   override lazy val projectSettings = {
-    def unidocRootProjectFilter(ignoreProjects: Seq[Project]) =
+    def unidocRootProjectFilter(ignoreProjects: Seq[ProjectReference]): ProjectFilter = 
       ignoreProjects.foldLeft(inAnyProject) { _ -- inProjects(_) }
 
     inTask(unidoc)(Seq(
@@ -131,6 +139,7 @@ object BootstrapGenjavadoc extends AutoPlugin {
 
   override lazy val projectSettings = UnidocRoot.CliOptions.genjavadocEnabled.ifTrue(
     Seq(
+      unidocGenjavadocVersion := "0.11",
       scalacOptions in Compile ++= Seq("-P:genjavadoc:fabricateParams=true", "-P:genjavadoc:suppressSynthetic=false")
     )
   ).getOrElse(Nil)

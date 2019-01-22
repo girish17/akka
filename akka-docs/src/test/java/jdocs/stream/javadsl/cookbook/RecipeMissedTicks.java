@@ -1,6 +1,7 @@
-/**
- *  Copyright (C) 2015-2018 Lightbend Inc. <http://www.lightbend.com/>
+/*
+ * Copyright (C) 2015-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package jdocs.stream.javadsl.cookbook;
 
 import akka.NotUsed;
@@ -22,8 +23,6 @@ import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.Test;
 import scala.concurrent.Await;
-import scala.concurrent.duration.Duration;
-import scala.concurrent.duration.FiniteDuration;
 
 import java.util.concurrent.TimeUnit;
 
@@ -47,8 +46,7 @@ public class RecipeMissedTicks extends RecipeTest {
   @Test
   public void work() throws Exception {
     new TestKit(system) {
-      class Tick {
-      }
+      class Tick {}
 
       final Tick Tick = new Tick();
 
@@ -57,16 +55,22 @@ public class RecipeMissedTicks extends RecipeTest {
         final Sink<Integer, TestSubscriber.Probe<Integer>> sink = TestSink.probe(system);
 
         @SuppressWarnings("unused")
-        //#missed-ticks
+        // #missed-ticks
         final Flow<Tick, Integer, NotUsed> missedTicks =
-          Flow.of(Tick.class).conflateWithSeed(tick -> 0, (missed, tick) -> missed + 1);
-        //#missed-ticks
+            Flow.of(Tick.class).conflateWithSeed(tick -> 0, (missed, tick) -> missed + 1);
+        // #missed-ticks
         final TestLatch latch = new TestLatch(3, system);
         final Flow<Tick, Integer, NotUsed> realMissedTicks =
-                Flow.of(Tick.class).conflateWithSeed(tick -> 0, (missed, tick) -> { latch.countDown(); return missed + 1; });
+            Flow.of(Tick.class)
+                .conflateWithSeed(
+                    tick -> 0,
+                    (missed, tick) -> {
+                      latch.countDown();
+                      return missed + 1;
+                    });
 
         Pair<TestPublisher.Probe<Tick>, TestSubscriber.Probe<Integer>> pubSub =
-        		tickStream.via(realMissedTicks).toMat(sink, Keep.both()).run(mat);
+            tickStream.via(realMissedTicks).toMat(sink, Keep.both()).run(mat);
         TestPublisher.Probe<Tick> pub = pubSub.first();
         TestSubscriber.Probe<Integer> sub = pubSub.second();
 
@@ -75,14 +79,15 @@ public class RecipeMissedTicks extends RecipeTest {
         pub.sendNext(Tick);
         pub.sendNext(Tick);
 
-        FiniteDuration timeout = FiniteDuration.create(200, TimeUnit.MILLISECONDS);
+        scala.concurrent.duration.FiniteDuration timeout =
+            scala.concurrent.duration.FiniteDuration.create(200, TimeUnit.MILLISECONDS);
 
-        Await.ready(latch, Duration.create(1, TimeUnit.SECONDS));
+        Await.ready(latch, scala.concurrent.duration.Duration.create(1, TimeUnit.SECONDS));
 
         sub.request(1);
         sub.expectNext(3);
         sub.request(1);
-        sub.expectNoMsg(timeout);
+        sub.expectNoMessage(timeout);
 
         pub.sendNext(Tick);
         sub.expectNext(0);
@@ -90,9 +95,7 @@ public class RecipeMissedTicks extends RecipeTest {
         pub.sendComplete();
         sub.request(1);
         sub.expectComplete();
-
       }
     };
   }
-
 }

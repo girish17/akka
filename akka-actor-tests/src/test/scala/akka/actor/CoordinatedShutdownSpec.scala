@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2016-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2016-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.actor
 
 import java.util
@@ -163,7 +164,6 @@ class CoordinatedShutdownSpec extends AkkaSpec(ConfigFactory.parseString(
     }
 
     "run from a given phase" in {
-      import system.dispatcher
       val phases = Map(
         "a" → emptyPhase,
         "b" → phase("a"),
@@ -187,7 +187,6 @@ class CoordinatedShutdownSpec extends AkkaSpec(ConfigFactory.parseString(
     }
 
     "only run once" in {
-      import system.dispatcher
       val phases = Map("a" → emptyPhase)
       val co = new CoordinatedShutdown(extSys, phases)
       co.addTask("a", "a1") { () ⇒
@@ -243,7 +242,6 @@ class CoordinatedShutdownSpec extends AkkaSpec(ConfigFactory.parseString(
     }
 
     "abort if recover=off" in {
-      import system.dispatcher
       val phases = Map(
         "a" → emptyPhase,
         "b" → Phase(dependsOn = Set("a"), timeout = 100.millis, recover = false, enabled = true),
@@ -287,7 +285,6 @@ class CoordinatedShutdownSpec extends AkkaSpec(ConfigFactory.parseString(
     }
 
     "be possible to add tasks in later phase from task in earlier phase" in {
-      import system.dispatcher
       val phases = Map(
         "a" → emptyPhase,
         "b" → phase("a"))
@@ -324,6 +321,18 @@ class CoordinatedShutdownSpec extends AkkaSpec(ConfigFactory.parseString(
         "a" → Phase(dependsOn = Set.empty, timeout = 10.seconds, recover = true, enabled = true),
         "b" → Phase(dependsOn = Set("a"), timeout = 15.seconds, recover = true, enabled = true),
         "c" → Phase(dependsOn = Set("a", "b"), timeout = 10.seconds, recover = false, enabled = true)))
+    }
+
+    "default exit code to 0" in {
+      lazy val conf = ConfigFactory.load().getConfig("akka.coordinated-shutdown")
+      val confWithOverrides = CoordinatedShutdown.confWithOverrides(conf, None)
+      confWithOverrides.getInt("exit-code") should ===(0)
+    }
+
+    "default exit code to -1 when the Reason is ClusterDowning" in {
+      lazy val conf = ConfigFactory.load().getConfig("akka.coordinated-shutdown")
+      val confWithOverrides = CoordinatedShutdown.confWithOverrides(conf, Some(CoordinatedShutdown.ClusterDowningReason))
+      confWithOverrides.getInt("exit-code") should ===(-1)
     }
 
     // this must be the last test, since it terminates the ActorSystem
@@ -401,6 +410,22 @@ class CoordinatedShutdownSpec extends AkkaSpec(ConfigFactory.parseString(
         cancellable.cancel()
       }
     }
+
+    "access extension after system termination" in new JvmHookTest {
+      lazy val systemName = s"CoordinatedShutdownSpec-terminated-${System.currentTimeMillis()}"
+      lazy val systemConfig = ConfigFactory.parseString(
+        """
+          akka.coordinated-shutdown.run-by-jvm-shutdown-hook = on
+          akka.coordinated-shutdown.terminate-actor-system = on
+        """)
+
+      def withSystemRunning(newSystem: ActorSystem): Unit = {
+        TestKit.shutdownActorSystem(newSystem)
+        CoordinatedShutdown(newSystem)
+
+      }
+    }
+
   }
 
   abstract class JvmHookTest {

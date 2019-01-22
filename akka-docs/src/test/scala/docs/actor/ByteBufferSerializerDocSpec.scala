@@ -1,6 +1,7 @@
 /*
- * Copyright (C) 2016-2018 Lightbend Inc. <https://www.lightbend.com>
+ * Copyright (C) 2016-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package docs.actor
 
 //#bytebufserializer-with-manifest
@@ -19,7 +20,7 @@ class ByteBufferSerializerDocSpec {
 
     // Implement this method for compatibility with `SerializerWithStringManifest`.
     override def toBinary(o: AnyRef): Array[Byte] = {
-      // in production code, aquire this from a BufferPool
+      // in production code, acquire this from a BufferPool
       val buf = ByteBuffer.allocate(256)
 
       toBinary(o, buf)

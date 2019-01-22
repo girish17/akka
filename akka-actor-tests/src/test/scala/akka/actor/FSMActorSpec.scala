@@ -1,5 +1,5 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.actor
@@ -235,7 +235,7 @@ class FSMActorSpec extends AkkaSpec(Map("akka.actor.debug.fsm" → true)) with I
         }
       })
 
-      def checkTimersActive(active: Boolean) {
+      def checkTimersActive(active: Boolean): Unit = {
         for (timer ← timerNames) fsmref.isTimerActive(timer) should ===(active)
         fsmref.isStateTimerActive should ===(active)
       }

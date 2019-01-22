@@ -1,9 +1,10 @@
-/**
- * Copyright (C) 2015-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2015-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.stream.scaladsl
 
-import akka.stream.testkit.Utils._
+import akka.stream.testkit.scaladsl.StreamTestKit._
 import akka.stream.testkit._
 import org.reactivestreams.Publisher
 
@@ -229,6 +230,19 @@ class FlowInterleaveSpec extends BaseTwoStreamsSetup {
       up2.subscribe(graphSubscriber2)
       up1.expectSubscription().expectCancellation()
       up2.expectSubscription().expectCancellation()
+    }
+
+    "work in example" in {
+      //#interleave
+      import akka.stream.scaladsl.Source
+      import akka.stream.scaladsl.Sink
+
+      val sourceA = Source(List(1, 2, 3, 4))
+      val sourceB = Source(List(10, 20, 30, 40))
+
+      sourceA.interleave(sourceB, segmentSize = 2).runWith(Sink.foreach(println))
+      //prints 1, 2, 10, 20, 3, 4, 30, 40
+      //#interleave
     }
   }
 

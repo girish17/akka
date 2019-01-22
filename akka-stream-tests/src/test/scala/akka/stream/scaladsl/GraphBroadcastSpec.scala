@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2018-2019 Lightbend Inc. <https://www.lightbend.com>
+ */
+
 package akka.stream.scaladsl
 
 import akka.stream.testkit.scaladsl.{ TestSink, TestSource }
@@ -6,7 +10,7 @@ import scala.concurrent.{ Await, Future }
 import scala.concurrent.duration._
 import akka.stream._
 import akka.stream.testkit._
-import akka.stream.testkit.Utils._
+import akka.stream.testkit.scaladsl.StreamTestKit._
 
 class GraphBroadcastSpec extends StreamSpec {
 

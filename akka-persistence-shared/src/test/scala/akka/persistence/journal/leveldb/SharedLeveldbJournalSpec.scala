@@ -1,5 +1,5 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.persistence.journal.leveldb
@@ -71,7 +71,7 @@ class SharedLeveldbJournalSpec extends AkkaSpec(SharedLeveldbJournalSpec.config)
   val systemA = ActorSystem("SysA", system.settings.config)
   val systemB = ActorSystem("SysB", system.settings.config)
 
-  override protected def afterTermination() {
+  override protected def afterTermination(): Unit = {
     shutdown(systemA)
     shutdown(systemB)
     super.afterTermination()

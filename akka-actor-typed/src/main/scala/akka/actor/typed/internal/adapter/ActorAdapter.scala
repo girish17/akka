@@ -1,23 +1,43 @@
-/**
- * Copyright (C) 2016-2018 Lightbend Inc. <http://www.lightbend.com/>
+/*
+ * Copyright (C) 2016-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.actor.typed
 package internal
 package adapter
 
+import java.lang.reflect.InvocationTargetException
+
+import akka.actor.ActorInitializationException
+import akka.actor.typed.internal.adapter.ActorAdapter.TypedActorFailedException
+
 import scala.annotation.tailrec
-import akka.{ actor ⇒ a }
+import scala.util.Failure
+import scala.util.Success
+import scala.util.Try
+import akka.{ actor ⇒ untyped }
 import akka.annotation.InternalApi
 import akka.util.OptionVal
-
-import scala.util.control.NonFatal
 
 /**
  * INTERNAL API
  */
-@InternalApi private[typed] class ActorAdapter[T](_initialBehavior: Behavior[T]) extends a.Actor with a.ActorLogging {
+@InternalApi private[typed] object ActorAdapter {
+
+  /**
+   * Thrown to indicate that a Behavior has failed so that the parent gets
+   * the cause and can fill in the cause in the `ChildFailed` signal
+   * Wrapped to avoid it being logged as the typed supervision will already
+   * have logged it.
+   */
+  final case class TypedActorFailedException(cause: Throwable) extends RuntimeException
+}
+
+/**
+ * INTERNAL API
+ */
+@InternalApi private[typed] class ActorAdapter[T](_initialBehavior: Behavior[T]) extends untyped.Actor with untyped.ActorLogging {
   import Behavior._
-  import ActorRefAdapter.toUntyped
 
   protected var behavior: Behavior[T] = _initialBehavior
 
@@ -30,23 +50,21 @@ import scala.util.control.NonFatal
    * Failures from failed children, that were stopped through untyped supervision, this is what allows us to pass
    * child exception in Terminated for direct children.
    */
-  private var failures: Map[a.ActorRef, Throwable] = Map.empty
+  private var failures: Map[untyped.ActorRef, Throwable] = Map.empty
 
-  def receive = running
+  def receive: Receive = running
 
   def running: Receive = {
-    case a.Terminated(ref) ⇒
+    case untyped.Terminated(ref) ⇒
       val msg =
         if (failures contains ref) {
           val ex = failures(ref)
           failures -= ref
-          Terminated(ActorRefAdapter(ref))(ex)
-        } else Terminated(ActorRefAdapter(ref))(null)
+          ChildFailed(ActorRefAdapter(ref), ex)
+        } else Terminated(ActorRefAdapter(ref))
       next(Behavior.interpretSignal(behavior, ctx, msg), msg)
-    case a.ReceiveTimeout ⇒
+    case untyped.ReceiveTimeout ⇒
       next(Behavior.interpretMessage(behavior, ctx, ctx.receiveTimeoutMsg), ctx.receiveTimeoutMsg)
-    case wrapped: AskResponse[Any, T] @unchecked ⇒
-      withSafelyAdapted(() ⇒ wrapped.adapt())(handleMessage)
     case wrapped: AdaptMessage[Any, T] @unchecked ⇒
       withSafelyAdapted(() ⇒ wrapped.adapt()) {
         case AdaptWithRegisteredMessageAdapter(msg) ⇒
@@ -81,6 +99,9 @@ import scala.util.control.NonFatal
               behavior = new Behavior.StoppedBehavior(OptionVal.Some(Behavior.canonicalize(postStop, behavior, ctx)))
           }
           context.stop(self)
+        case f: FailedBehavior ⇒
+          // For the parent untyped supervisor to pick up the exception
+          throw new TypedActorFailedException(f.cause)
         case _ ⇒
           behavior = Behavior.canonicalize(b, behavior, ctx)
       }
@@ -103,31 +124,57 @@ import scala.util.control.NonFatal
     handle(ctx.messageAdapters)
   }
 
-  private def withSafelyAdapted[U, V](adapt: () ⇒ U)(body: U ⇒ V): Unit =
-    try body(adapt())
-    catch {
-      case NonFatal(ex) ⇒
+  private def withSafelyAdapted[U, V](adapt: () ⇒ U)(body: U ⇒ V): Unit = {
+    Try(adapt()) match {
+      case Success(a) ⇒
+        body(a)
+      case Failure(ex) ⇒
         log.error(ex, "Exception thrown out of adapter. Stopping myself.")
         context.stop(self)
     }
-
-  override def unhandled(msg: Any): Unit = msg match {
-    case t @ Terminated(ref) ⇒ throw DeathPactException(ref)
-    case msg: Signal         ⇒ // that's ok
-    case other               ⇒ super.unhandled(other)
   }
 
-  override val supervisorStrategy = a.OneForOneStrategy() {
+  override def unhandled(msg: Any): Unit = msg match {
+    case Terminated(ref) ⇒ throw DeathPactException(ref)
+    case _: Signal       ⇒ // that's ok
+    case other           ⇒ super.unhandled(other)
+  }
+
+  override val supervisorStrategy = untyped.OneForOneStrategy(loggingEnabled = false) {
+    case TypedActorFailedException(cause) ⇒
+      // These have already been optionally logged by typed supervision
+      recordChildFailure(cause)
+      untyped.SupervisorStrategy.Stop
     case ex ⇒
-      val ref = sender()
-      if (context.asInstanceOf[a.ActorCell].isWatching(ref)) failures = failures.updated(ref, ex)
-      a.SupervisorStrategy.Stop
+      recordChildFailure(ex)
+      val logMessage = ex match {
+        case e: ActorInitializationException if e.getCause ne null ⇒ e.getCause match {
+          case ex: InvocationTargetException if ex.getCause ne null ⇒ ex.getCause.getMessage
+          case ex ⇒ ex.getMessage
+        }
+        case e ⇒ e.getMessage
+      }
+      // log at Error as that is what the supervision strategy would have done.
+      log.error(ex, logMessage)
+      untyped.SupervisorStrategy.Stop
+  }
+
+  private def recordChildFailure(ex: Throwable): Unit = {
+    val ref = sender()
+    if (context.asInstanceOf[untyped.ActorCell].isWatching(ref)) {
+      failures = failures.updated(ref, ex)
+    }
   }
 
   override def preStart(): Unit =
-    if (!isAlive(behavior))
-      context.stop(self)
-    else
+    if (!isAlive(behavior)) {
+      if (behavior == Behavior.stopped) context.stop(self)
+      else {
+        // post stop hook may touch context
+        initializeContext()
+        context.stop(self)
+      }
+    } else
       start()
 
   protected def start(): Unit = {

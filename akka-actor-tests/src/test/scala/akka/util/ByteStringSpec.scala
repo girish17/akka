@@ -1,5 +1,5 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.util
@@ -35,7 +35,7 @@ class ByteStringSpec extends WordSpec with Matchers with Checkers {
       for {
         chunks ← Gen.choose(0, s)
         bytes ← Gen.listOfN(chunks, genSimpleByteString(1, 1 max (s / (chunks max 1))))
-      } yield (ByteString.empty /: bytes)(_ ++ _)
+      } yield bytes.foldLeft(ByteString.empty)(_ ++ _)
     }
   }
 
@@ -50,6 +50,15 @@ class ByteStringSpec extends WordSpec with Matchers with Checkers {
         Gen.choose(from, xs.length)
       }
     } yield (xs, from, until)
+  }
+
+  case class ByteStringGrouped(bs: ByteString, size: Int)
+
+  implicit val arbitraryByteStringGrouped = Arbitrary {
+    for {
+      xs ← arbitraryByteString.arbitrary
+      size ← Gen.choose(1, 1 max xs.length)
+    } yield ByteStringGrouped(xs, size)
   }
 
   type ArraySlice[A] = (Array[A], Int, Int)
@@ -611,7 +620,7 @@ class ByteStringSpec extends WordSpec with Matchers with Checkers {
       "dropping" in { check((a: ByteString, b: ByteString) ⇒ (a ++ b).drop(b.size).size == a.size) }
       "taking" in { check((a: ByteString, b: ByteString) ⇒ (a ++ b).take(a.size) == a) }
       "takingRight" in { check((a: ByteString, b: ByteString) ⇒ (a ++ b).takeRight(b.size) == b) }
-      "droppnig then taking" in { check((a: ByteString, b: ByteString) ⇒ (b ++ a ++ b).drop(b.size).take(a.size) == a) }
+      "dropping then taking" in { check((a: ByteString, b: ByteString) ⇒ (b ++ a ++ b).drop(b.size).take(a.size) == a) }
       "droppingRight" in { check((a: ByteString, b: ByteString) ⇒ (b ++ a ++ b).drop(b.size).dropRight(b.size) == a) }
     }
 
@@ -730,6 +739,14 @@ class ByteStringSpec extends WordSpec with Matchers with Checkers {
         }
       }
 
+      "calling grouped" in {
+        check { grouped: ByteStringGrouped ⇒
+          likeVector(grouped.bs) {
+            _.grouped(grouped.size).toIndexedSeq
+          }
+        }
+      }
+
       "calling copyToArray" in {
         check { slice: ByteStringSlice ⇒
           slice match {
@@ -745,11 +762,16 @@ class ByteStringSpec extends WordSpec with Matchers with Checkers {
 
     "serialize correctly" when {
       "parsing regular ByteString1C as compat" in {
-        val oldSerd = "aced000573720021616b6b612e7574696c2e42797465537472696e672442797465537472696e67314336e9eed0afcfe4a40200015b000562797465737400025b427872001b616b6b612e7574696c2e436f6d7061637442797465537472696e67fa2925150f93468f0200007870757200025b42acf317f8060854e002000078700000000a74657374737472696e67"
+        val oldSerd =
+          if (util.Properties.versionNumberString.startsWith("2.11") || util.Properties.versionNumberString.startsWith("2.12"))
+            "aced000573720021616b6b612e7574696c2e42797465537472696e672442797465537472696e67314336e9eed0afcfe4a40200015b000562797465737400025b427872001b616b6b612e7574696c2e436f6d7061637442797465537472696e67fa2925150f93468f0200007870757200025b42acf317f8060854e002000078700000000a74657374737472696e67"
+          else
+            // The data is the same, but the class hierarchy changed in 2.13:
+            "aced000573720021616b6b612e7574696c2e42797465537472696e672442797465537472696e67314336e9eed0afcfe4a40200015b000562797465737400025b427872001b616b6b612e7574696c2e436f6d7061637442797465537472696e676c083a30328adea002000078720014616b6b612e7574696c2e42797465537472696e678efa6cf8286d3c930200007870757200025b42acf317f8060854e002000078700000000a74657374737472696e67"
         val bs = ByteString("teststring", "UTF8")
         val str = hexFromSer(bs)
 
-        require(oldSerd == str)
+        str should be(oldSerd)
       }
 
       "given all types of ByteString" in {
@@ -894,6 +916,15 @@ class ByteStringSpec extends WordSpec with Matchers with Checkers {
           buffer.get(array)
           bytes == array.toSeq
         }
+      }
+
+      "copying chunks to an array" in {
+        val iterator = (ByteString("123") ++ ByteString("456")).iterator
+        val array = Array.ofDim[Byte](6)
+        iterator.copyToArray(array, 0, 2)
+        iterator.copyToArray(array, 2, 2)
+        iterator.copyToArray(array, 4, 2)
+        assert(new String(array) === "123456")
       }
     }
 

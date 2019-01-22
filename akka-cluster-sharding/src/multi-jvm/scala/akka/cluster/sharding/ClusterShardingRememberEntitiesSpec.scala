@@ -1,14 +1,13 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.cluster.sharding
 
-import scala.concurrent.duration._
 import java.io.File
 
 import akka.actor._
-import akka.cluster.Cluster
-import akka.cluster.sharding.ShardRegion.GracefulShutdown
+import akka.cluster.{ Cluster, MemberStatus, MultiNodeClusterSpec }
 import akka.persistence.Persistence
 import akka.persistence.journal.leveldb.{ SharedLeveldbJournal, SharedLeveldbStore }
 import akka.remote.testconductor.RoleName
@@ -16,11 +15,9 @@ import akka.remote.testkit.{ MultiNodeConfig, MultiNodeSpec, STMultiNodeSpec }
 import akka.testkit._
 import com.typesafe.config.ConfigFactory
 import org.apache.commons.io.FileUtils
+import akka.util.ccompat.imm._
 
 import scala.concurrent.duration._
-import akka.cluster.sharding.ShardRegion.GetClusterShardingStats
-import akka.cluster.sharding.ShardRegion.ClusterShardingStats
-import akka.cluster.MemberStatus
 
 object ClusterShardingRememberEntitiesSpec {
 
@@ -72,7 +69,7 @@ abstract class ClusterShardingRememberEntitiesSpecConfig(val mode: String) exten
       dir = target/ShardingRememberEntitiesSpec/sharding-ddata
       map-size = 10 MiB
     }
-    """))
+    """).withFallback(MultiNodeClusterSpec.clusterConfig))
 
   nodeConfig(third)(ConfigFactory.parseString(s"""
     akka.cluster.sharding.distributed-data.durable.lmdb {
@@ -110,12 +107,12 @@ abstract class ClusterShardingRememberEntitiesSpec(config: ClusterShardingRememb
   val storageLocations = List(new File(system.settings.config.getString(
     "akka.cluster.sharding.distributed-data.durable.lmdb.dir")).getParentFile)
 
-  override protected def atStartup() {
+  override protected def atStartup(): Unit = {
     storageLocations.foreach(dir ⇒ if (dir.exists) FileUtils.deleteQuietly(dir))
     enterBarrier("startup")
   }
 
-  override protected def afterTermination() {
+  override protected def afterTermination(): Unit = {
     storageLocations.foreach(dir ⇒ if (dir.exists) FileUtils.deleteQuietly(dir))
   }
 
@@ -179,7 +176,7 @@ abstract class ClusterShardingRememberEntitiesSpec(config: ClusterShardingRememb
         within(remaining) {
           awaitAssert {
             cluster.state.members.size should ===(2)
-            cluster.state.members.map(_.status) should ===(Set(MemberStatus.Up))
+            cluster.state.members.unsorted.map(_.status) should ===(Set(MemberStatus.Up))
           }
         }
       }

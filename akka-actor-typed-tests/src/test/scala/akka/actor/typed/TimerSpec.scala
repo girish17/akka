@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2017-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2017-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.actor.typed
 
 import java.util.concurrent.CountDownLatch
@@ -9,14 +10,20 @@ import java.util.concurrent.atomic.AtomicInteger
 
 import scala.concurrent.duration._
 import scala.util.control.NoStackTrace
+import akka.actor.testkit.typed.scaladsl._
 import akka.actor.typed.scaladsl.Behaviors
 import akka.actor.typed.scaladsl.TimerScheduler
-import akka.testkit.TimingTest
-import akka.testkit.typed.TestKitSettings
-import akka.testkit.typed.scaladsl.{ ActorTestKit, _ }
+import akka.testkit.{ EventFilter, TimingTest }
 import org.scalatest.WordSpecLike
 
-class TimerSpec extends ActorTestKit with WordSpecLike with TypedAkkaSpecWithShutdown {
+class TimerSpec extends ScalaTestWithActorTestKit(
+  """
+    akka.loggers = [ akka.testkit.TestEventListener ]
+  """) with WordSpecLike {
+
+  // FIXME eventfilter support in typed testkit
+  import scaladsl.adapter._
+  implicit val untypedSystem = system.toUntyped
 
   sealed trait Command
   case class Tick(n: Int) extends Command
@@ -44,7 +51,7 @@ class TimerSpec extends ActorTestKit with WordSpecLike with TypedAkkaSpecWithShu
       target(monitor, timer, nextCount)
     }
 
-    Behaviors.immutable[Command] { (ctx, cmd) ⇒
+    Behaviors.receive[Command] { (context, cmd) ⇒
       cmd match {
         case Tick(n) ⇒
           monitor ! Tock(n)
@@ -66,11 +73,11 @@ class TimerSpec extends ActorTestKit with WordSpecLike with TypedAkkaSpecWithShu
           latch.await(10, TimeUnit.SECONDS)
           throw e
       }
-    } onSignal {
-      case (ctx, PreRestart) ⇒
+    } receiveSignal {
+      case (context, PreRestart) ⇒
         monitor ! GotPreRestart(timer.isTimerActive("T"))
         Behaviors.same
-      case (ctx, PostStop) ⇒
+      case (context, PostStop) ⇒
         monitor ! GotPostStop(timer.isTimerActive("T"))
         Behaviors.same
     }
@@ -145,7 +152,7 @@ class TimerSpec extends ActorTestKit with WordSpecLike with TypedAkkaSpecWithShu
         case _: Tock   ⇒ FishingOutcomes.continue
         // but we know that after we saw Cancelled we won't see any more
         case Cancelled ⇒ FishingOutcomes.complete
-        case msg       ⇒ FishingOutcomes.fail(s"unexpected msg: $msg")
+        case message   ⇒ FishingOutcomes.fail(s"unexpected message: $message")
       }
       probe.expectNoMessage(interval + 100.millis.dilated)
 
@@ -165,14 +172,16 @@ class TimerSpec extends ActorTestKit with WordSpecLike with TypedAkkaSpecWithShu
       probe.expectMessage(Tock(1))
 
       val latch = new CountDownLatch(1)
-      // next Tock(1) is enqueued in mailbox, but should be discarded by new incarnation
-      ref ! SlowThenThrow(latch, new Exc)
-      probe.expectNoMessage(interval + 100.millis.dilated)
-      latch.countDown()
-      probe.expectMessage(GotPreRestart(false))
-      probe.expectNoMessage(interval / 2)
-      probe.expectMessage(Tock(2))
+      EventFilter[Exc](occurrences = 1).intercept {
+        // next Tock(1) is enqueued in mailbox, but should be discarded by new incarnation
+        ref ! SlowThenThrow(latch, new Exc)
 
+        probe.expectNoMessage(interval + 100.millis.dilated)
+        latch.countDown()
+        probe.expectMessage(GotPreRestart(false))
+        probe.expectNoMessage(interval / 2)
+        probe.expectMessage(Tock(2))
+      }
       ref ! End
       probe.expectMessage(GotPostStop(false))
     }
@@ -191,13 +200,15 @@ class TimerSpec extends ActorTestKit with WordSpecLike with TypedAkkaSpecWithShu
 
       probe.expectMessage(Tock(2))
 
-      val latch = new CountDownLatch(1)
-      // next Tock(2) is enqueued in mailbox, but should be discarded by new incarnation
-      ref ! SlowThenThrow(latch, new Exc)
-      probe.expectNoMessage(interval + 100.millis.dilated)
-      latch.countDown()
-      probe.expectMessage(GotPreRestart(false))
-      probe.expectMessage(Tock(1))
+      EventFilter[Exc](occurrences = 1).intercept {
+        val latch = new CountDownLatch(1)
+        // next Tock(2) is enqueued in mailbox, but should be discarded by new incarnation
+        ref ! SlowThenThrow(latch, new Exc)
+        probe.expectNoMessage(interval + 100.millis.dilated)
+        latch.countDown()
+        probe.expectMessage(GotPreRestart(false))
+        probe.expectMessage(Tock(1))
+      }
 
       ref ! End
       probe.expectMessage(GotPostStop(false))
@@ -210,8 +221,10 @@ class TimerSpec extends ActorTestKit with WordSpecLike with TypedAkkaSpecWithShu
         target(probe.ref, timer, 1)
       }
       val ref = spawn(behv)
-      ref ! Throw(new Exc)
-      probe.expectMessage(GotPostStop(false))
+      EventFilter[Exc](occurrences = 1).intercept {
+        ref ! Throw(new Exc)
+        probe.expectMessage(GotPostStop(false))
+      }
     }
 
     "cancel timers when stopped voluntarily" taggedAs TimingTest in {
@@ -223,6 +236,80 @@ class TimerSpec extends ActorTestKit with WordSpecLike with TypedAkkaSpecWithShu
       val ref = spawn(behv)
       ref ! End
       probe.expectMessage(GotPostStop(false))
+    }
+
+    "allow for nested timers" in {
+      val probe = TestProbe[String]()
+      val ref = spawn(Behaviors.withTimers[String] { outerTimer ⇒
+        outerTimer.startPeriodicTimer("outer-key", "outer-message", 50.millis)
+        Behaviors.withTimers { innerTimer ⇒
+          innerTimer.startPeriodicTimer("inner-key", "inner-message", 50.millis)
+          Behaviors.receiveMessage { message ⇒
+            if (message == "stop") Behaviors.stopped
+            else {
+              probe.ref ! message
+              Behaviors.same
+            }
+          }
+        }
+      })
+
+      var seen = Set.empty[String]
+      probe.fishForMessage(500.millis) {
+        case message ⇒
+          seen += message
+          if (seen.size == 2) FishingOutcomes.complete
+          else FishingOutcomes.continue
+      }
+
+      ref ! "stop"
+    }
+
+    "keep timers when behavior changes" in {
+      val probe = TestProbe[String]()
+      def newBehavior(n: Int): Behavior[String] = Behaviors.withTimers[String] { timers ⇒
+        timers.startPeriodicTimer(s"key${n}", s"message${n}", 50.milli)
+        Behaviors.receiveMessage { message ⇒
+          if (message == "stop") Behaviors.stopped
+          else {
+            probe.ref ! message
+            newBehavior(n + 1)
+          }
+        }
+      }
+
+      val ref = spawn(newBehavior(1))
+      var seen = Set.empty[String]
+      probe.fishForMessage(500.millis) {
+        case message ⇒
+          seen += message
+          if (seen.size == 2) FishingOutcomes.complete
+          else FishingOutcomes.continue
+      }
+
+      ref ! "stop"
+    }
+
+    "not grow stack when nesting withTimers" in {
+      def next(n: Int, probe: ActorRef[Array[StackTraceElement]]): Behavior[String] = Behaviors.withTimers { timers ⇒
+        timers.startSingleTimer("key", "tick", 1.millis)
+        Behaviors.receiveMessage { message ⇒
+          if (n == 20) {
+            val e = new RuntimeException().fillInStackTrace()
+            val trace = e.getStackTrace
+            probe ! trace
+            Behaviors.stopped
+          } else {
+            next(n + 1, probe)
+          }
+        }
+      }
+
+      val probe = TestProbe[Array[StackTraceElement]]()
+      spawn(next(0, probe.ref))
+      val elements = probe.receiveMessage()
+      if (elements.count(_.getClassName == "TimerInterceptor") > 1)
+        fail(s"Stack contains TimerInterceptor more than once: \n${elements.mkString("\n\t")}")
     }
   }
 }

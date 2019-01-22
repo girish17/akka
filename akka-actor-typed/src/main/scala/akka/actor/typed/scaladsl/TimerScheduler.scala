@@ -1,13 +1,14 @@
-/**
- * Copyright (C) 2017-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2017-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.actor.typed.scaladsl
 
 import scala.concurrent.duration.FiniteDuration
 
 /**
  * Support for scheduled `self` messages in an actor.
- * It is used with `Actor.withTimers`.
+ * It is used with `Behaviors.withTimers`.
  * Timers are bound to the lifecycle of the actor that owns it,
  * and thus are cancelled automatically when it is restarted or stopped.
  *
@@ -29,14 +30,14 @@ trait TimerScheduler[T] {
 
   /**
    * Start a timer that will send `msg` once to the `self` actor after
-   * the given `timeout`.
+   * the given `delay`.
    *
    * Each timer has a key and if a new timer with same key is started
    * the previous is cancelled and it's guaranteed that a message from the
    * previous timer is not received, even though it might already be enqueued
    * in the mailbox when the new timer is started.
    */
-  def startSingleTimer(key: Any, msg: T, timeout: FiniteDuration): Unit
+  def startSingleTimer(key: Any, msg: T, delay: FiniteDuration): Unit
 
   /**
    * Check if a timer with a given `key` is active.

@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2015-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2015-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.stream.impl.io
 
 import java.io.InputStream
@@ -12,7 +13,6 @@ import akka.Done
 import akka.annotation.InternalApi
 import akka.stream.ActorAttributes.Dispatcher
 import akka.stream.Attributes.InputBuffer
-import akka.stream.impl.Stages.DefaultAttributes.IODispatcher
 import akka.stream.impl.{ ErrorPublisher, SourceModule }
 import akka.stream.stage._
 import akka.stream.{ IOResult, _ }
@@ -59,7 +59,7 @@ private[akka] final class FileSource(path: Path, chunkSize: Int, startPosition: 
     val logic = new GraphStageLogic(shape) with OutHandler {
       handler ⇒
       val buffer = ByteBuffer.allocate(chunkSize)
-      val maxReadAhead = inheritedAttributes.getAttribute(classOf[InputBuffer], InputBuffer(16, 16)).max
+      val maxReadAhead = inheritedAttributes.get[InputBuffer](InputBuffer(16, 16)).max
       var channel: FileChannel = _
       var position = startPosition
       var chunkCallback: Try[Int] ⇒ Unit = _
@@ -73,7 +73,7 @@ private[akka] final class FileSource(path: Path, chunkSize: Int, startPosition: 
           // this is a bit weird but required to keep existing semantics
           if (!Files.exists(path)) throw new NoSuchFileException(path.toString)
 
-          require(Files.isRegularFile(path), s"Path '$path' is not a regular file")
+          require(!Files.isDirectory(path), s"Path '$path' is a directory")
           require(Files.isReadable(path), s"Missing read permission for '$path'")
 
           channel = FileChannel.open(path, StandardOpenOption.READ)
@@ -155,12 +155,9 @@ private[akka] final class FileSource(path: Path, chunkSize: Int, startPosition: 
     val pub = try {
       val is = createInputStream() // can throw, i.e. FileNotFound
 
-      val dispatcher = context.effectiveAttributes.mandatoryAttribute[Dispatcher] match {
-        case IODispatcher     ⇒ ActorMaterializerHelper.downcast(context.materializer).settings.blockingIoDispatcher
-        case Dispatcher(name) ⇒ name
-      }
-
-      val props = InputStreamPublisher.props(is, ioResultPromise, chunkSize).withDispatcher(dispatcher)
+      val props = InputStreamPublisher
+        .props(is, ioResultPromise, chunkSize)
+        .withDispatcher(Dispatcher.resolve(context))
 
       val ref = materializer.actorOf(context, props)
       akka.stream.actor.ActorPublisher[ByteString](ref)

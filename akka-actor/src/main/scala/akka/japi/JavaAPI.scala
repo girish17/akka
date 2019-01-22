@@ -1,5 +1,5 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.japi
@@ -57,7 +57,7 @@ trait Effect {
 /**
  * Java API: Defines a criteria and determines whether the parameter meets this criteria.
  *
- * This class is kept for compatibility, but for future API's please prefer [[akka.japi.function.Predicate]].
+ * This class is kept for compatibility, but for future API's please prefer [[java.util.function.Predicate]].
  */
 trait Predicate[T] {
   def test(param: T): Boolean

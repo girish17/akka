@@ -1,11 +1,20 @@
+/*
+ * Copyright (C) 2018-2019 Lightbend Inc. <https://www.lightbend.com>
+ */
+
 // Prevent package clashes with the Java examples:
 package docs.tutorial_1
 
 //#print-refs
-package com.lightbend.akka.sample
+package com.example
 
 import akka.actor.{ Actor, Props, ActorSystem }
 import scala.io.StdIn
+
+object PrintMyActorRefActor {
+  def props: Props =
+    Props(new PrintMyActorRefActor)
+}
 
 class PrintMyActorRefActor extends Actor {
   override def receive: Receive = {
@@ -18,17 +27,27 @@ class PrintMyActorRefActor extends Actor {
 
 import akka.testkit.AkkaSpec
 
+object StartStopActor1 {
+  def props: Props =
+    Props(new StartStopActor1)
+}
+
 //#start-stop
 class StartStopActor1 extends Actor {
   override def preStart(): Unit = {
     println("first started")
-    context.actorOf(Props[StartStopActor2], "second")
+    context.actorOf(StartStopActor2.props, "second")
   }
   override def postStop(): Unit = println("first stopped")
 
   override def receive: Receive = {
     case "stop" ⇒ context.stop(self)
   }
+}
+
+object StartStopActor2 {
+  def props: Props =
+    Props(new StartStopActor2)
 }
 
 class StartStopActor2 extends Actor {
@@ -41,13 +60,23 @@ class StartStopActor2 extends Actor {
 }
 //#start-stop
 
+object SupervisingActor {
+  def props: Props =
+    Props(new SupervisingActor)
+}
+
 //#supervise
 class SupervisingActor extends Actor {
-  val child = context.actorOf(Props[SupervisedActor], "supervised-actor")
+  val child = context.actorOf(SupervisedActor.props, "supervised-actor")
 
   override def receive: Receive = {
     case "failChild" ⇒ child ! "fail"
   }
+}
+
+object SupervisedActor {
+  def props: Props =
+    Props(new SupervisedActor)
 }
 
 class SupervisedActor extends Actor {
@@ -70,7 +99,7 @@ class ActorHierarchyExperiments extends AkkaSpec {
 object ActorHierarchyExperiments extends App {
   val system = ActorSystem("testSystem")
 
-  val firstRef = system.actorOf(Props[PrintMyActorRefActor], "first-actor")
+  val firstRef = system.actorOf(PrintMyActorRefActor.props, "first-actor")
   println(s"First: $firstRef")
   firstRef ! "printit"
 
@@ -86,7 +115,7 @@ object ActorHierarchyExperiments extends App {
     // format: OFF
     //#start-stop-main
 
-val first = system.actorOf(Props[StartStopActor1], "first")
+val first = system.actorOf(StartStopActor1.props, "first")
 first ! "stop"
     //#start-stop-main
     // format: ON
@@ -96,7 +125,7 @@ first ! "stop"
     // format: OFF
     //#supervise-main
 
-val supervisingActor = system.actorOf(Props[SupervisingActor], "supervising-actor")
+val supervisingActor = system.actorOf(SupervisingActor.props, "supervising-actor")
 supervisingActor ! "failChild"
     //#supervise-main
     // format: ON

@@ -1,5 +1,5 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.serialization
@@ -22,6 +22,7 @@ import java.util.concurrent.atomic.AtomicReference
 import scala.annotation.tailrec
 import java.util.NoSuchElementException
 import akka.annotation.InternalApi
+import akka.util.ccompat._
 
 object Serialization {
 
@@ -31,11 +32,11 @@ object Serialization {
   type ClassSerializer = (Class[_], Serializer)
 
   /**
-   * This holds a reference to the current transport serialization information used for
-   * serializing local actor refs.
-   * INTERNAL API
+   * INTERNAL API: This holds a reference to the current transport serialization information used for
+   * serializing local actor refs, or if serializer library e.g. custom serializer/deserializer in
+   * Jackson need access to the current `ActorSystem`.
    */
-  private[akka] val currentTransportInformation = new DynamicVariable[Information](null)
+  @InternalApi private[akka] val currentTransportInformation = new DynamicVariable[Information](null)
 
   class Settings(val config: Config) {
     val Serializers: Map[String, String] = configToMap(config.getConfig("akka.actor.serializers"))
@@ -67,15 +68,10 @@ object Serialization {
   }
 
   /**
-   * Serialization information needed for serializing local actor refs.
-   * INTERNAL API
-   */
-  private[akka] final case class Information(address: Address, system: ActorSystem)
-
-  /**
    * The serialized path of an actorRef, based on the current transport serialization information.
-   * If there is no external address available for the requested address then the systems default
-   * address will be used.
+   * If there is no external address available in the given `ActorRef` then the systems default
+   * address will be used and that is retrieved from the ThreadLocal `Serialization.Information`
+   * that was set with [[Serialization#withTransportInformation]].
    */
   def serializedActorPath(actorRef: ActorRef): String = {
     val path = actorRef.path
@@ -99,6 +95,52 @@ object Serialization {
         }
     }
   }
+
+  /**
+   * Serialization information needed for serializing local actor refs,
+   * or if serializer library e.g. custom serializer/deserializer in Jackson need
+   * access to the current `ActorSystem`.
+   */
+  final case class Information(address: Address, system: ActorSystem)
+
+  /**
+   * Sets serialization information in a `ThreadLocal` and runs `f`. The information is
+   * needed for serializing local actor refs, or if serializer library e.g. custom serializer/deserializer
+   * in Jackson need access to the current `ActorSystem`. The current [[Information]] can be accessed within
+   * `f` via [[Serialization#getCurrentTransportInformation]].
+   *
+   * Akka Remoting sets this value when serializing and deserializing messages, and when using
+   * the ordinary `serialize` and `deserialize` methods in [[Serialization]] the value is also
+   * set automatically.
+   *
+   * @return value returned by `f`
+   */
+  def withTransportInformation[T](system: ExtendedActorSystem)(f: () ⇒ T): T = {
+    val info = system.provider.serializationInformation
+    if (Serialization.currentTransportInformation.value eq info)
+      f() // already set
+    else
+      Serialization.currentTransportInformation.withValue(info) {
+        f()
+      }
+  }
+
+  /**
+   * Gets the serialization information from a `ThreadLocal` that was assigned via
+   * [[Serialization#withTransportInformation]]. The information is needed for serializing
+   * local actor refs, or if serializer library e.g. custom serializer/deserializer
+   * in Jackson need access to the current `ActorSystem`.
+   *
+   * @throws IllegalStateException if the information was not set
+   */
+  def getCurrentTransportInformation(): Information = {
+    Serialization.currentTransportInformation.value match {
+      case null ⇒ throw new IllegalStateException(
+        "currentTransportInformation is not set, use Serialization.withTransportInformation")
+      case t ⇒ t
+    }
+  }
+
 }
 
 /**
@@ -115,11 +157,28 @@ class Serialization(val system: ExtendedActorSystem) extends Extension {
   val log: LoggingAdapter = _log
   private val manifestCache = new AtomicReference[Map[String, Option[Class[_]]]](Map.empty[String, Option[Class[_]]])
 
+  /** INTERNAL API */
+  @InternalApi private[akka] def serializationInformation: Serialization.Information =
+    system.provider.serializationInformation
+
+  private def withTransportInformation[T](f: () ⇒ T): T = {
+    val oldInfo = Serialization.currentTransportInformation.value
+    try {
+      if (oldInfo eq null)
+        Serialization.currentTransportInformation.value = serializationInformation
+      f()
+    } finally Serialization.currentTransportInformation.value = oldInfo
+  }
+
   /**
    * Serializes the given AnyRef/java.lang.Object according to the Serialization configuration
    * to either an Array of Bytes or an Exception if one was thrown.
    */
-  def serialize(o: AnyRef): Try[Array[Byte]] = Try(findSerializerFor(o).toBinary(o))
+  def serialize(o: AnyRef): Try[Array[Byte]] = {
+    withTransportInformation { () ⇒
+      Try(findSerializerFor(o).toBinary(o))
+    }
+  }
 
   /**
    * Deserializes the given array of bytes using the specified serializer id,
@@ -130,10 +189,13 @@ class Serialization(val system: ExtendedActorSystem) extends Extension {
     Try {
       val serializer = try getSerializerById(serializerId) catch {
         case _: NoSuchElementException ⇒ throw new NotSerializableException(
-          s"Cannot find serializer with id [$serializerId]. The most probable reason is that the configuration entry " +
-            "akka.actor.serializers is not in synch between the two systems.")
+          s"Cannot find serializer with id [$serializerId]${clazz.map(c ⇒ " (class [" + c.getName + "])").getOrElse("")}. " +
+            "The most probable reason is that the configuration entry " +
+            "akka.actor.serializers is not in sync between the two systems.")
       }
-      serializer.fromBinary(bytes, clazz).asInstanceOf[T]
+      withTransportInformation { () ⇒
+        serializer.fromBinary(bytes, clazz).asInstanceOf[T]
+      }
     }
 
   /**
@@ -145,8 +207,8 @@ class Serialization(val system: ExtendedActorSystem) extends Extension {
     Try {
       val serializer = try getSerializerById(serializerId) catch {
         case _: NoSuchElementException ⇒ throw new NotSerializableException(
-          s"Cannot find serializer with id [$serializerId]. The most probable reason is that the configuration entry " +
-            "akka.actor.serializers is not in synch between the two systems.")
+          s"Cannot find serializer with id [$serializerId] (manifest [$manifest]). The most probable reason is that the configuration entry " +
+            "akka.actor.serializers is not in sync between the two systems.")
       }
       deserializeByteArray(bytes, serializer, manifest)
     }
@@ -158,27 +220,29 @@ class Serialization(val system: ExtendedActorSystem) extends Extension {
         updateCache(manifestCache.get, key, value) // recursive, try again
     }
 
-    serializer match {
-      case s2: SerializerWithStringManifest ⇒ s2.fromBinary(bytes, manifest)
-      case s1 ⇒
-        if (manifest == "")
-          s1.fromBinary(bytes, None)
-        else {
-          val cache = manifestCache.get
-          cache.get(manifest) match {
-            case Some(cachedClassManifest) ⇒ s1.fromBinary(bytes, cachedClassManifest)
-            case None ⇒
-              system.dynamicAccess.getClassFor[AnyRef](manifest) match {
-                case Success(classManifest) ⇒
-                  val classManifestOption: Option[Class[_]] = Some(classManifest)
-                  updateCache(cache, manifest, classManifestOption)
-                  s1.fromBinary(bytes, classManifestOption)
-                case Failure(e) ⇒
-                  throw new NotSerializableException(
-                    s"Cannot find manifest class [$manifest] for serializer with id [${serializer.identifier}].")
-              }
+    withTransportInformation { () ⇒
+      serializer match {
+        case s2: SerializerWithStringManifest ⇒ s2.fromBinary(bytes, manifest)
+        case s1 ⇒
+          if (manifest == "")
+            s1.fromBinary(bytes, None)
+          else {
+            val cache = manifestCache.get
+            cache.get(manifest) match {
+              case Some(cachedClassManifest) ⇒ s1.fromBinary(bytes, cachedClassManifest)
+              case None ⇒
+                system.dynamicAccess.getClassFor[AnyRef](manifest) match {
+                  case Success(classManifest) ⇒
+                    val classManifestOption: Option[Class[_]] = Some(classManifest)
+                    updateCache(cache, manifest, classManifestOption)
+                    s1.fromBinary(bytes, classManifestOption)
+                  case Failure(_) ⇒
+                    throw new NotSerializableException(
+                      s"Cannot find manifest class [$manifest] for serializer with id [${serializer.identifier}].")
+                }
+            }
           }
-        }
+      }
     }
   }
 
@@ -191,25 +255,37 @@ class Serialization(val system: ExtendedActorSystem) extends Extension {
   def deserializeByteBuffer(buf: ByteBuffer, serializerId: Int, manifest: String): AnyRef = {
     val serializer = try getSerializerById(serializerId) catch {
       case _: NoSuchElementException ⇒ throw new NotSerializableException(
-        s"Cannot find serializer with id [$serializerId]. The most probable reason is that the configuration entry " +
+        s"Cannot find serializer with id [$serializerId] (manifest [$manifest]). The most probable reason is that the configuration entry " +
           "akka.actor.serializers is not in synch between the two systems.")
     }
-    serializer match {
-      case ser: ByteBufferSerializer ⇒
-        ser.fromBinary(buf, manifest)
-      case _ ⇒
-        val bytes = new Array[Byte](buf.remaining())
-        buf.get(bytes)
-        deserializeByteArray(bytes, serializer, manifest)
-    }
+
+    // not using `withTransportInformation { () =>` because deserializeByteBuffer is supposed to be the
+    // possibility for allocation free serialization
+    val oldInfo = Serialization.currentTransportInformation.value
+    try {
+      if (oldInfo eq null)
+        Serialization.currentTransportInformation.value = serializationInformation
+
+      serializer match {
+        case ser: ByteBufferSerializer ⇒
+          ser.fromBinary(buf, manifest)
+        case _ ⇒
+          val bytes = new Array[Byte](buf.remaining())
+          buf.get(bytes)
+          deserializeByteArray(bytes, serializer, manifest)
+      }
+    } finally Serialization.currentTransportInformation.value = oldInfo
   }
 
   /**
    * Deserializes the given array of bytes using the specified type to look up what Serializer should be used.
    * Returns either the resulting object or an Exception if one was thrown.
    */
-  def deserialize[T](bytes: Array[Byte], clazz: Class[T]): Try[T] =
-    Try(serializerFor(clazz).fromBinary(bytes, Some(clazz)).asInstanceOf[T])
+  def deserialize[T](bytes: Array[Byte], clazz: Class[T]): Try[T] = {
+    withTransportInformation { () ⇒
+      Try(serializerFor(clazz).fromBinary(bytes, Some(clazz)).asInstanceOf[T])
+    }
+  }
 
   /**
    * Returns the Serializer configured for the given object, returns the NullSerializer if it's null.
@@ -301,6 +377,8 @@ class Serialization(val system: ExtendedActorSystem) extends Extension {
     system.dynamicAccess.createInstanceFor[Serializer](fqn, List(classOf[ExtendedActorSystem] → system)) recoverWith {
       case _: NoSuchMethodException ⇒
         system.dynamicAccess.createInstanceFor[Serializer](fqn, Nil)
+      // FIXME only needed on 2.13.0-M5 due to https://github.com/scala/bug/issues/11242
+      case t ⇒ Failure(t)
     }
   }
 
@@ -326,7 +404,7 @@ class Serialization(val system: ExtendedActorSystem) extends Extension {
   private val serializers: Map[String, Serializer] = {
     val fromConfig = for ((k: String, v: String) ← settings.Serializers) yield k → serializerOf(v).get
     val result = fromConfig ++ serializerDetails.map(d ⇒ d.alias → d.serializer)
-    ensureOnlyAllowedSerializers(result.map { case (_, ser) ⇒ ser }(collection.breakOut))
+    ensureOnlyAllowedSerializers(result.iterator.map { case (_, ser) ⇒ ser })
     result
   }
 
@@ -345,7 +423,7 @@ class Serialization(val system: ExtendedActorSystem) extends Extension {
     }
 
     val result = sort(fromConfig ++ fromSettings)
-    ensureOnlyAllowedSerializers(result.map { case (_, ser) ⇒ ser }(collection.breakOut))
+    ensureOnlyAllowedSerializers(result.iterator.map { case (_, ser) ⇒ ser })
     result
   }
 
@@ -367,26 +445,26 @@ class Serialization(val system: ExtendedActorSystem) extends Extension {
    * obeying any order between unrelated subtypes (insert sort).
    */
   private def sort(in: Iterable[ClassSerializer]): immutable.Seq[ClassSerializer] =
-    ((new ArrayBuffer[ClassSerializer](in.size) /: in) { (buf, ca) ⇒
+    (in.foldLeft(new ArrayBuffer[ClassSerializer](in.size)) { (buf, ca) ⇒
       buf.indexWhere(_._1 isAssignableFrom ca._1) match {
         case -1 ⇒ buf append ca
         case x  ⇒ buf insert (x, ca)
       }
       buf
-    }).to[immutable.Seq]
+    }).to(immutable.Seq)
 
   /**
    * serializerMap is a Map whose keys is the class that is serializable and values is the serializer
    * to be used for that class.
    */
   private val serializerMap: ConcurrentHashMap[Class[_], Serializer] =
-    (new ConcurrentHashMap[Class[_], Serializer] /: bindings) { case (map, (c, s)) ⇒ map.put(c, s); map }
+    bindings.foldLeft(new ConcurrentHashMap[Class[_], Serializer]) { case (map, (c, s)) ⇒ map.put(c, s); map }
 
   /**
    * Maps from a Serializer Identity (Int) to a Serializer instance (optimization)
    */
   val serializerByIdentity: Map[Int, Serializer] =
-    Map(NullSerializer.identifier → NullSerializer) ++ serializers map { case (_, v) ⇒ (v.identifier, v) }
+    Map(NullSerializer.identifier → NullSerializer) ++ serializers.map { case (_, v) ⇒ (v.identifier, v) }
 
   /**
    * Serializers with id 0 - 1023 are stored in an array for quick allocation free access

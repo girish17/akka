@@ -1,12 +1,13 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.cluster.typed.internal
 
-import akka.actor.ExtendedActorSystem
+import akka.actor.typed.Props
 import akka.annotation.InternalApi
 import akka.cluster.ClusterEvent.MemberEvent
-import akka.cluster.{ ClusterEvent, MemberStatus }
+import akka.cluster.{ ClusterEvent, Member, MemberStatus }
 import akka.actor.typed.{ ActorRef, ActorSystem, Terminated }
 import akka.cluster.typed._
 import akka.actor.typed.internal.adapter.ActorSystemAdapter
@@ -51,7 +52,7 @@ private[akka] object AdapterClusterImpl {
       }
     }
 
-    Behaviors.immutable[AnyRef] { (ctx, msg) ⇒
+    Behaviors.receive[AnyRef] { (ctx, msg) ⇒
 
       msg match {
         case Subscribe(subscriber: ActorRef[SelfUp] @unchecked, clazz) if clazz == classOf[SelfUp] ⇒
@@ -93,7 +94,7 @@ private[akka] object AdapterClusterImpl {
           Behaviors.same
 
       }
-    }.onSignal {
+    }.receiveSignal {
 
       case (_, Terminated(ref)) ⇒
         upSubscribers = upSubscribers.filterNot(_ == ref)
@@ -103,7 +104,7 @@ private[akka] object AdapterClusterImpl {
     }.narrow[ClusterStateSubscription]
   }
 
-  private def managerBehavior(adaptedCluster: akka.cluster.Cluster) = Behaviors.immutable[ClusterCommand]((ctx, msg) ⇒
+  private def managerBehavior(adaptedCluster: akka.cluster.Cluster) = Behaviors.receive[ClusterCommand]((_, msg) ⇒
     msg match {
       case Join(address) ⇒
         adaptedCluster.join(address)
@@ -135,19 +136,19 @@ private[akka] final class AdapterClusterImpl(system: ActorSystem[_]) extends Clu
   import AdapterClusterImpl._
 
   require(system.isInstanceOf[ActorSystemAdapter[_]], "only adapted actor systems can be used for cluster features")
-  private val untypedSystem = system.toUntyped
-  private def extendedUntyped = untypedSystem.asInstanceOf[ExtendedActorSystem]
-  private val untypedCluster = akka.cluster.Cluster(untypedSystem)
+  private val untypedCluster = akka.cluster.Cluster(system.toUntyped)
 
-  override def selfMember = untypedCluster.selfMember
-  override def isTerminated = untypedCluster.isTerminated
-  override def state = untypedCluster.state
+  override def selfMember: Member = untypedCluster.selfMember
+  override def isTerminated: Boolean = untypedCluster.isTerminated
+  override def state: ClusterEvent.CurrentClusterState = untypedCluster.state
 
   // must not be lazy as it also updates the cached selfMember
-  override val subscriptions: ActorRef[ClusterStateSubscription] = extendedUntyped.systemActorOf(
-    PropsAdapter(subscriptionsBehavior(untypedCluster)), "clusterStateSubscriptions")
+  override val subscriptions: ActorRef[ClusterStateSubscription] =
+    system.internalSystemActorOf(
+      subscriptionsBehavior(untypedCluster), "clusterStateSubscriptions", Props.empty)
 
-  override lazy val manager: ActorRef[ClusterCommand] = extendedUntyped.systemActorOf(
-    PropsAdapter(managerBehavior(untypedCluster)), "clusterCommandManager")
+  override lazy val manager: ActorRef[ClusterCommand] =
+    system.internalSystemActorOf(
+      managerBehavior(untypedCluster), "clusterCommandManager", Props.empty)
 
 }

@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2015-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2015-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package docs.stream
 
 import akka.testkit.AkkaSpec
@@ -9,10 +10,8 @@ import akka.stream._
 import akka.util.ByteString
 import java.nio.ByteOrder
 import akka.stream.stage._
-import scala.annotation.tailrec
 import scala.concurrent.duration._
 import scala.concurrent.Await
-import org.scalactic.ConversionCheckedTripleEquals
 
 object BidiFlowDocSpec {
   //#codec

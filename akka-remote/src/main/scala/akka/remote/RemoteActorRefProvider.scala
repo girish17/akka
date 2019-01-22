@@ -1,5 +1,5 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.remote
@@ -10,11 +10,9 @@ import akka.dispatch.sysmsg._
 import akka.event.{ EventStream, Logging, LoggingAdapter }
 import akka.event.Logging.Error
 import akka.pattern.pipe
-
 import scala.util.control.NonFatal
 
 import akka.actor.SystemGuardian.{ RegisterTerminationHook, TerminationHook, TerminationHookDone }
-
 import scala.util.control.Exception.Catcher
 import scala.concurrent.Future
 
@@ -24,13 +22,12 @@ import akka.dispatch.{ RequiresMessageQueue, UnboundedMessageQueueSemantics }
 import akka.remote.artery.ArteryTransport
 import akka.remote.artery.aeron.ArteryAeronUdpTransport
 import akka.remote.artery.ArterySettings
-import akka.remote.artery.ArterySettings.AeronUpd
 import akka.util.OptionVal
 import akka.remote.artery.OutboundEnvelope
 import akka.remote.artery.SystemMessageDelivery.SystemMessageEnvelope
-import akka.remote.serialization.ActorRefResolveCache
 import akka.remote.serialization.ActorRefResolveThreadLocalCache
 import akka.remote.artery.tcp.ArteryTcpTransport
+import akka.serialization.Serialization
 
 /**
  * INTERNAL API
@@ -403,7 +400,7 @@ private[akka] class RemoteActorRefProvider(
             new EmptyLocalActorRef(this, RootActorPath(address) / elems, eventStream)
         }
       case _ ⇒
-        log.debug("resolve of unknown path [{}] failed", path)
+        log.debug("Resolve (deserialization) of unknown (invalid) path [{}], using deadLetters.", path)
         deadLetters
     }
   }
@@ -412,7 +409,7 @@ private[akka] class RemoteActorRefProvider(
     // using thread local LRU cache, which will call internalRresolveActorRef
     // if the value is not cached
     actorRefResolveThreadLocalCache match {
-      case null ⇒ internalResolveActorRef(path) // not initalized yet
+      case null ⇒ internalResolveActorRef(path) // not initialized yet
       case c    ⇒ c.threadLocalCache(this).getOrCompute(path)
     }
   }
@@ -436,7 +433,7 @@ private[akka] class RemoteActorRefProvider(
         }
       }
     case _ ⇒
-      log.debug("resolve of unknown path [{}] failed", path)
+      log.debug("Resolve (deserialization) of unknown (invalid) path [{}], using deadLetters.", path)
       deadLetters
   }
 
@@ -477,6 +474,21 @@ private[akka] class RemoteActorRefProvider(
 
   def getDefaultAddress: Address = transport.defaultAddress
 
+  // no need for volatile, only intended as cached value, not necessarily a singleton value
+  private var serializationInformationCache: OptionVal[Serialization.Information] = OptionVal.None
+  @InternalApi override private[akka] def serializationInformation: Serialization.Information =
+    serializationInformationCache match {
+      case OptionVal.Some(info) ⇒ info
+      case OptionVal.None ⇒
+        if ((transport eq null) || (transport.defaultAddress eq null))
+          local.serializationInformation // address not know yet, access before complete init and binding
+        else {
+          val info = Serialization.Information(transport.defaultAddress, transport.system)
+          serializationInformationCache = OptionVal.Some(info)
+          info
+        }
+    }
+
   private def hasAddress(address: Address): Boolean =
     address == local.rootPath.address || address == rootPath.address || transport.addresses(address)
 
@@ -509,6 +521,9 @@ private[akka] class RemoteActorRef private[akka] (
   props:                 Option[Props],
   deploy:                Option[Deploy])
   extends InternalActorRef with RemoteRef {
+
+  if (path.address.hasLocalScope)
+    throw new IllegalArgumentException(s"Unexpected local address in RemoteActorRef [$this]")
 
   remote match {
     case t: ArteryTransport ⇒

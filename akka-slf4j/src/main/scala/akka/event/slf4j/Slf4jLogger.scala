@@ -1,5 +1,5 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.event.slf4j
@@ -73,7 +73,7 @@ class Slf4jLogger extends Actor with SLF4JLogging with RequiresMessageQueue[Logg
     case event @ Warning(logSource, logClass, message) ⇒
       withMdc(logSource, event) {
         event match {
-          case e: LogEventWithCause ⇒ Logger(logClass, logSource).warn(markerIfPresent(event), if (message != null) message.toString else null, e.cause)
+          case e: LogEventWithCause ⇒ Logger(logClass, logSource).warn(markerIfPresent(event), if (message != null) message.toString else e.cause.getLocalizedMessage, e.cause)
           case _                    ⇒ Logger(logClass, logSource).warn(markerIfPresent(event), if (message != null) message.toString else null)
         }
       }
@@ -94,7 +94,7 @@ class Slf4jLogger extends Actor with SLF4JLogging with RequiresMessageQueue[Logg
   }
 
   @inline
-  final def withMdc(logSource: String, logEvent: LogEvent)(logStatement: ⇒ Unit) {
+  final def withMdc(logSource: String, logEvent: LogEvent)(logStatement: ⇒ Unit): Unit = {
     MDC.put(mdcAkkaSourceAttributeName, logSource)
     MDC.put(mdcThreadAttributeName, logEvent.thread.getName)
     MDC.put(mdcAkkaTimestamp, formatTimestamp(logEvent.timestamp))
@@ -113,6 +113,7 @@ class Slf4jLogger extends Actor with SLF4JLogging with RequiresMessageQueue[Logg
     event match {
       case m: LogEventWithMarker ⇒
         m.marker match {
+          case null                        ⇒ null
           case slf4jMarker: Slf4jLogMarker ⇒ slf4jMarker.marker
           case marker                      ⇒ MarkerFactory.getMarker(marker.name)
         }

@@ -1,11 +1,11 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.remote.serialization
 
 import akka.actor._
-import akka.remote.{ RemoteScope, RemoteWatcher, UniqueAddress }
+import akka.remote.{ RemoteScope, RemoteWatcher }
 import akka.serialization.SerializationExtension
 import akka.testkit.AkkaSpec
 import com.typesafe.config.ConfigFactory
@@ -15,8 +15,7 @@ import scala.concurrent.duration._
 import java.util.Optional
 import java.io.NotSerializableException
 
-import akka.Done
-import akka.remote.ArteryControlFormats.UniqueAddress
+import akka.{ Done, NotUsed }
 import akka.remote.routing.RemoteRouterConfig
 import akka.routing._
 
@@ -35,7 +34,12 @@ object MiscMessageSerializerSpec {
 
     override def equals(other: Any): Boolean = other match {
       case e: TestException ⇒
-        e.getMessage == getMessage && e.stackTrace == stackTrace && e.getCause == getCause
+        e.getMessage == getMessage && e.getCause == getCause &&
+          // on JDK9+ the stacktraces aren't equal, something about how they are constructed
+          // they are alike enough to be roughly equal though
+          e.stackTrace.zip(stackTrace).forall {
+            case (t, o) ⇒ t.getClassName == o.getClassName && t.getFileName == o.getFileName
+          }
       case _ ⇒ false
     }
 
@@ -88,6 +92,7 @@ class MiscMessageSerializerSpec extends AkkaSpec(MiscMessageSerializerSpec.testC
       "RemoteWatcher.Heartbeat" → RemoteWatcher.Heartbeat,
       "RemoteWatcher.HertbeatRsp" → RemoteWatcher.HeartbeatRsp(65537),
       "Done" → Done,
+      "NotUsed" → NotUsed,
       "Address" → Address("akka", "system", "host", 1337),
       "UniqueAddress" → akka.remote.UniqueAddress(Address("akka", "system", "host", 1337), 82751),
       "LocalScope" → LocalScope,
@@ -150,9 +155,12 @@ class MiscMessageSerializerSpec extends AkkaSpec(MiscMessageSerializerSpec.testC
       val deserialized = serializer.fromBinary(serializer.toBinary(aiex), serializer.manifest(aiex))
         .asInstanceOf[ActorInitializationException]
 
-      deserialized.getCause should ===(aiex.getCause)
       deserialized.getMessage should ===(aiex.getMessage)
       deserialized.getActor should ===(aiex.getActor)
+      // on JDK9+ these aren't equal anymore, depends on how they were constructed
+      // deserialized.getCause should ===(aiex.getCause)
+      deserialized.getCause.getClass should ===(aiex.getCause.getClass)
+      deserialized.getCause.getMessage should ===(aiex.getCause.getMessage)
     }
 
     "serialize and deserialze ActorInitializationException if ref is null" in {
@@ -161,9 +169,12 @@ class MiscMessageSerializerSpec extends AkkaSpec(MiscMessageSerializerSpec.testC
       val deserialized = serializer.fromBinary(serializer.toBinary(aiex), serializer.manifest(aiex))
         .asInstanceOf[ActorInitializationException]
 
-      deserialized.getCause should ===(aiex.getCause)
       deserialized.getMessage should ===(aiex.getMessage)
       deserialized.getActor should ===(aiex.getActor)
+      // on JDK9+ these aren't equal anymore, depends on how they were constructed
+      // deserialized.getCause should ===(aiex.getCause)
+      deserialized.getCause.getClass should ===(aiex.getCause.getClass)
+      deserialized.getCause.getMessage should ===(aiex.getCause.getMessage)
     }
 
     "serialize and deserialze ActorInitializationException if cause  is null" in {
@@ -172,9 +183,11 @@ class MiscMessageSerializerSpec extends AkkaSpec(MiscMessageSerializerSpec.testC
       val deserialized = serializer.fromBinary(serializer.toBinary(aiex), serializer.manifest(aiex))
         .asInstanceOf[ActorInitializationException]
 
-      deserialized.getCause should ===(aiex.getCause)
       deserialized.getMessage should ===(aiex.getMessage)
       deserialized.getActor should ===(aiex.getActor)
+      // on JDK9+ these aren't equal anymore, depends on how they were constructed
+      // deserialized.getCause should ===(aiex.getCause)
+      deserialized.getCause should be(null)
     }
   }
 }

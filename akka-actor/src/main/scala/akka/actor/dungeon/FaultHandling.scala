@@ -1,5 +1,5 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.actor.dungeon
@@ -139,7 +139,7 @@ private[akka] trait FaultHandling { this: ActorCell ⇒
     }
   }
 
-  protected def terminate() {
+  protected def terminate(): Unit = {
     setReceiveTimeout(Duration.Undefined)
     cancelReceiveTimeout
 
@@ -200,7 +200,7 @@ private[akka] trait FaultHandling { this: ActorCell ⇒
     }
   }
 
-  private def finishTerminate() {
+  private def finishTerminate(): Unit = {
     val a = actor
     /* The following order is crucial for things to work properly. Only change this if you're very confident and lucky.
      *
@@ -288,10 +288,10 @@ private[akka] trait FaultHandling { this: ActorCell ⇒
      * then we are continuing the previously suspended recreate/create/terminate action
      */
     status match {
-      case Some(c @ ChildrenContainer.Recreation(cause)) ⇒ finishRecreate(cause, actor)
-      case Some(c @ ChildrenContainer.Creation()) ⇒ finishCreate()
-      case Some(ChildrenContainer.Termination) ⇒ finishTerminate()
-      case _ ⇒
+      case Some(ChildrenContainer.Recreation(cause)) ⇒ finishRecreate(cause, actor)
+      case Some(ChildrenContainer.Creation())        ⇒ finishCreate()
+      case Some(ChildrenContainer.Termination)       ⇒ finishTerminate()
+      case _                                         ⇒
     }
   }
 

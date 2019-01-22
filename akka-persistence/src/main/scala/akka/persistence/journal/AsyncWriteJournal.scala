@@ -1,6 +1,5 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
- * Copyright (C) 2012-2016 Eligotech BV.
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.persistence.journal
@@ -15,7 +14,6 @@ import scala.concurrent.Future
 import scala.util.{ Failure, Success, Try }
 import scala.util.control.NonFatal
 import akka.pattern.CircuitBreaker
-import java.util.Locale
 
 /**
  * Abstract journal, optimized for asynchronous, non-blocking writes.
@@ -138,7 +136,7 @@ trait AsyncWriteJournal extends Actor with WriteJournalBase with AsyncRecovery {
         breaker.withCircuitBreaker(asyncReadHighestSequenceNr(persistenceId, readHighestSequenceNrFrom))
           .flatMap { highSeqNr ⇒
             val toSeqNr = math.min(toSequenceNr, highSeqNr)
-            if (highSeqNr == 0L || fromSequenceNr > toSeqNr)
+            if (toSeqNr <= 0L || fromSequenceNr > toSeqNr)
               Future.successful(highSeqNr)
             else {
               // Send replayed messages and replay result to persistentActor directly. No need
@@ -161,11 +159,11 @@ trait AsyncWriteJournal extends Actor with WriteJournalBase with AsyncRecovery {
 
       case d @ DeleteMessagesTo(persistenceId, toSequenceNr, persistentActor) ⇒
         breaker.withCircuitBreaker(asyncDeleteMessagesTo(persistenceId, toSequenceNr)) map {
-          case _ ⇒ DeleteMessagesSuccess(toSequenceNr)
+          _ ⇒ DeleteMessagesSuccess(toSequenceNr)
         } recover {
           case e ⇒ DeleteMessagesFailure(e, toSequenceNr)
         } pipeTo persistentActor onComplete {
-          case _ ⇒ if (publish) context.system.eventStream.publish(d)
+          _ ⇒ if (publish) context.system.eventStream.publish(d)
         }
     }
   }
@@ -281,7 +279,7 @@ private[persistence] object AsyncWriteJournal {
     }
 
     @scala.annotation.tailrec
-    private def resequence(d: Desequenced) {
+    private def resequence(d: Desequenced): Unit = {
       if (d.snr == delivered + 1) {
         delivered = d.snr
         d.target.tell(d.msg, d.sender)

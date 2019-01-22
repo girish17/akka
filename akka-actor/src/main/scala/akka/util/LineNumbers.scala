@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2014-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2014-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.util
 
 import java.io.{ DataInputStream, InputStream }
@@ -178,7 +179,7 @@ object LineNumbers {
     } finally {
       try dis.close() catch {
         case ex: InterruptedException ⇒ throw ex
-        case NonFatal(ex)             ⇒ // ignore
+        case NonFatal(_)              ⇒ // ignore
       }
     }
   }

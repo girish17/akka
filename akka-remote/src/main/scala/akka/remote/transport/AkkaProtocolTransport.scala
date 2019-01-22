@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.remote.transport
 
 import java.util.concurrent.TimeoutException
@@ -553,7 +554,7 @@ private[transport] class ProtocolStateActor(
   }
 
   onTermination {
-    case StopEvent(reason, _, OutboundUnassociated(remoteAddress, statusPromise, transport)) ⇒
+    case StopEvent(reason, _, OutboundUnassociated(_, statusPromise, _)) ⇒
       statusPromise.tryFailure(reason match {
         case FSM.Failure(info: DisassociateInfo) ⇒ disassociateException(info)
         case _                                   ⇒ new AkkaProtocolException("Transport disassociated before handshake finished")
@@ -572,7 +573,7 @@ private[transport] class ProtocolStateActor(
       })
       wrappedHandle.disassociate(disassociationReason(reason), log)
 
-    case StopEvent(reason, _, AssociatedWaitHandler(handlerFuture, wrappedHandle, queue)) ⇒
+    case StopEvent(reason, _, AssociatedWaitHandler(handlerFuture, wrappedHandle, _)) ⇒
       // Invalidate exposed but still unfinished promise. The underlying association disappeared, so after
       // registration immediately signal a disassociate
       val disassociateNotification = reason match {
@@ -610,7 +611,7 @@ private[transport] class ProtocolStateActor(
     case FSM.Failure(ForbiddenUidReason)  ⇒ // no logging
     case FSM.Failure(TimeoutReason(errorMessage)) ⇒
       log.info(errorMessage)
-    case other ⇒ super.logTermination(reason)
+    case _ ⇒ super.logTermination(reason)
   }
 
   private def listenForListenerRegistration(readHandlerPromise: Promise[HandleEventListener]): Unit =

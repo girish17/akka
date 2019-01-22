@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package docs.actor
 
 import language.postfixOps
@@ -61,7 +62,7 @@ object FaultHandlingDocSpec {
       case p: Props ⇒ sender() ! context.actorOf(p)
     }
     // override default to kill all children during restart
-    override def preRestart(cause: Throwable, msg: Option[Any]) {}
+    override def preRestart(cause: Throwable, msg: Option[Any]): Unit = {}
   }
   //#supervisor2
 
@@ -112,7 +113,7 @@ class FaultHandlingDocSpec(_system: ActorSystem) extends TestKit(_system)
       }
       """)))
 
-  override def afterAll {
+  override def afterAll: Unit = {
     TestKit.shutdownActorSystem(system)
   }
 

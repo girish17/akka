@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2015-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2015-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.stream.scaladsl
 
 import akka.NotUsed
@@ -14,7 +15,8 @@ final class BidiFlow[-I1, +O1, -I2, +O2, +Mat](
   override val shape:            BidiShape[I1, O1, I2, O2]
 ) extends Graph[BidiShape[I1, O1, I2, O2], Mat] {
 
-  def asJava: javadsl.BidiFlow[I1, O1, I2, O2, Mat] = new javadsl.BidiFlow(this)
+  def asJava[JI1 <: I1, JO1 >: O1, JI2 <: I2, JO2 >: O2, JMat >: Mat]: javadsl.BidiFlow[JI1, JO1, JI2, JO2, JMat] =
+    new javadsl.BidiFlow(this)
 
   /**
    * Add the given BidiFlow as the next step in a bidirectional transformation
@@ -156,7 +158,7 @@ final class BidiFlow[-I1, +O1, -I2, +O2, +Mat](
    * of attributes. This means that further calls will not be able to remove these
    * attributes, but instead add new ones. Note that this
    * operation has no effect on an empty Flow (because the attributes apply
-   * only to the contained processing stages).
+   * only to the contained processing operators).
    */
   override def withAttributes(attr: Attributes): BidiFlow[I1, O1, I2, O2, Mat] =
     new BidiFlow(
@@ -168,7 +170,7 @@ final class BidiFlow[-I1, +O1, -I2, +O2, +Mat](
    * Add the given attributes to this Source. Further calls to `withAttributes`
    * will not remove these attributes. Note that this
    * operation has no effect on an empty Flow (because the attributes apply
-   * only to the contained processing stages).
+   * only to the contained processing operators).
    */
   override def addAttributes(attr: Attributes): BidiFlow[I1, O1, I2, O2, Mat] =
     withAttributes(traversalBuilder.attributes and attr)
@@ -283,7 +285,7 @@ object BidiFlow {
 
   /**
    * Create a BidiFlow where the top and bottom flows are just one simple mapping
-   * stage each, expressed by the two functions.
+   * operator each, expressed by the two functions.
    */
   def fromFunctions[I1, O1, I2, O2](outbound: I1 ⇒ O1, inbound: I2 ⇒ O2): BidiFlow[I1, O1, I2, O2, NotUsed] =
     fromFlows(Flow[I1].map(outbound), Flow[I2].map(inbound))
@@ -292,9 +294,9 @@ object BidiFlow {
    * If the time between two processed elements *in any direction* exceed the provided timeout, the stream is failed
    * with a [[scala.concurrent.TimeoutException]].
    *
-   * There is a difference between this stage and having two idleTimeout Flows assembled into a BidiStage.
-   * If the timeout is configured to be 1 seconds, then this stage will not fail even though there are elements flowing
-   * every second in one direction, but no elements are flowing in the other direction. I.e. this stage considers
+   * There is a difference between this operator and having two idleTimeout Flows assembled into a BidiStage.
+   * If the timeout is configured to be 1 seconds, then this operator will not fail even though there are elements flowing
+   * every second in one direction, but no elements are flowing in the other direction. I.e. this operator considers
    * the *joint* frequencies of the elements in both directions.
    */
   def bidirectionalIdleTimeout[I, O](timeout: FiniteDuration): BidiFlow[I, I, O, O, NotUsed] =

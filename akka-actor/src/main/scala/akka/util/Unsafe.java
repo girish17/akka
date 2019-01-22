@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.util;
 
 import java.lang.reflect.Field;
@@ -49,7 +50,7 @@ public final class Unsafe {
         } else {
             final char[] chars = (char[]) instance.getObject(str, stringValueFieldOffset);
             int i = 0;
-            while (i < chars.length) {
+            while (i < str.length()) {
                 bytes[i] = (byte) chars[i++];
             }
         }

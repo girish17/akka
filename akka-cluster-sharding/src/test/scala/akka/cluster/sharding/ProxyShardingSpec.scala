@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.cluster.sharding
 
 import scala.concurrent.Await
@@ -21,7 +22,7 @@ object ProxyShardingSpec {
 class ProxyShardingSpec extends AkkaSpec(ProxyShardingSpec.config) {
 
   val role = "Shard"
-  val clusterSharding: ClusterSharding = ClusterSharding.get(system)
+  val clusterSharding: ClusterSharding = ClusterSharding(system)
   val shardingSettings: ClusterShardingSettings =
     ClusterShardingSettings.create(system)
   val messageExtractor = new ShardRegion.HashCodeMessageExtractor(10) {

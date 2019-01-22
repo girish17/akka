@@ -1,10 +1,11 @@
 /*
- * Copyright (C) 2016-2018 Lightbend Inc. <https://www.lightbend.com>
+ * Copyright (C) 2016-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.remote.serialization
 
 import akka.actor.setup.ActorSystemSetup
-import akka.actor.{ ActorSystem, BootstrapSetup, ExtendedActorSystem, Terminated }
+import akka.actor.{ ActorSystem, BootstrapSetup, ExtendedActorSystem }
 import akka.serialization._
 import akka.testkit.{ AkkaSpec, TestKit, TestProbe }
 import com.typesafe.config.ConfigFactory
@@ -71,7 +72,7 @@ class AllowJavaSerializationOffSpec extends AkkaSpec(
     akka {
       loglevel = debug
       actor {
-        enable-additional-serialization-bindings = off # this should be overriden by the setting below, which should force it to be on
+        enable-additional-serialization-bindings = off # this should be overridden by the setting below, which should force it to be on
         allow-java-serialization = off
         # this is by default on, but tests are running with off, use defaults here
         warn-about-java-serializer-usage = on

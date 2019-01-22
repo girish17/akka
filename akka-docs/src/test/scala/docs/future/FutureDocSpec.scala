@@ -1,13 +1,13 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package docs.future
 
 import language.postfixOps
 
 import akka.testkit._
-import akka.actor.{ Actor, Props }
-import akka.actor.Status
+import akka.actor.{ Actor, ActorRef, Props, Status }
 import akka.util.Timeout
 import scala.concurrent.duration._
 import java.lang.IllegalStateException
@@ -34,6 +34,97 @@ object FutureDocSpec {
         n += 2
     }
   }
+
+  //#pipe-to-usage
+  class ActorUsingPipeTo(target: ActorRef) extends Actor {
+    // akka.pattern.pipe needs to be imported
+    import akka.pattern.{ ask, pipe }
+    // implicit ExecutionContext should be in scope
+    implicit val ec: ExecutionContext = context.dispatcher
+    implicit val timeout: Timeout = 5.seconds
+
+    def receive = {
+      case _ ⇒
+        val future = target ? "some message"
+        future pipeTo sender() // use the pipe pattern
+    }
+  }
+  //#pipe-to-usage
+
+  //#pipe-to-returned-data
+  case class UserData(data: String)
+  case class UserActivity(activity: String)
+  //#pipe-to-returned-data
+
+  //#pipe-to-user-data-actor
+  class UserDataActor extends Actor {
+    import UserDataActor._
+
+    //holds the user data internally
+    var internalData: UserData = UserData("initial data")
+
+    def receive = {
+      case Get ⇒
+        sender() ! internalData
+    }
+  }
+
+  object UserDataActor {
+    case object Get
+  }
+  //#pipe-to-user-data-actor
+
+  //#pipe-to-user-activity-actor
+  trait UserActivityRepository {
+    def queryHistoricalActivities(userId: String): Future[List[UserActivity]]
+  }
+
+  class UserActivityActor(val userId: String, repository: UserActivityRepository) extends Actor {
+    import akka.pattern.pipe
+    import UserActivityActor._
+    implicit val ec: ExecutionContext = context.dispatcher
+
+    def receive = {
+      case Get ⇒
+        // user's historical activities are retrieved
+        // via the separate repository
+        repository.queryHistoricalActivities(userId) pipeTo sender()
+    }
+  }
+
+  object UserActivityActor {
+    case object Get
+  }
+  //#pipe-to-user-activity-actor
+
+  //#pipe-to-proxy-actor
+  class UserProxyActor(
+    userData:       ActorRef,
+    userActivities: ActorRef
+  ) extends Actor {
+    import UserProxyActor._
+    import akka.pattern.{ ask, pipe }
+    implicit val ec: ExecutionContext = context.dispatcher
+
+    implicit val timeout = Timeout(5 seconds)
+
+    def receive = {
+      case GetUserData ⇒
+        (userData ? UserDataActor.Get) pipeTo sender()
+      case GetUserActivities ⇒
+        (userActivities ? UserActivityActor.Get) pipeTo sender()
+    }
+  }
+  //#pipe-to-proxy-actor
+
+  //#pipe-to-proxy-messages
+  object UserProxyActor {
+    sealed trait Message
+    case object GetUserData extends Message
+    case object GetUserActivities extends Message
+  }
+  //#pipe-to-proxy-messages
+
 }
 
 class FutureDocSpec extends AkkaSpec {
@@ -71,11 +162,6 @@ class FutureDocSpec extends AkkaSpec {
     val future = actor ? msg // enabled by the “ask” import
     val result = Await.result(future, timeout.duration).asInstanceOf[String]
     //#ask-blocking
-
-    //#pipe-to
-    import akka.pattern.pipe
-    future pipeTo actor
-    //#pipe-to
 
     result should be("HELLO")
   }
@@ -363,40 +449,17 @@ class FutureDocSpec extends AkkaSpec {
     Await.result(future4, 3 seconds) should be("foo")
   }
 
-  "demonstrate usage of onSuccess & onFailure & onComplete" in {
-    {
-      val future = Future { "foo" }
-      //#onSuccess
-      future onSuccess {
-        case "bar"     ⇒ println("Got my bar alright!")
-        case x: String ⇒ println("Got some random string: " + x)
-      }
-      //#onSuccess
-      Await.result(future, 3 seconds) should be("foo")
+  "demonstrate usage of onComplete" in {
+    val future = Future { "foo" }
+    def doSomethingOnSuccess(r: String) = ()
+    def doSomethingOnFailure(t: Throwable) = ()
+    //#onComplete
+    future onComplete {
+      case Success(result)  ⇒ doSomethingOnSuccess(result)
+      case Failure(failure) ⇒ doSomethingOnFailure(failure)
     }
-    {
-      val future = Future.failed[String](new IllegalStateException("OHNOES"))
-      //#onFailure
-      future onFailure {
-        case ise: IllegalStateException if ise.getMessage == "OHNOES" ⇒
-        //OHNOES! We are in deep trouble, do something!
-        case e: Exception ⇒
-        //Do something else
-      }
-      //#onFailure
-    }
-    {
-      val future = Future { "foo" }
-      def doSomethingOnSuccess(r: String) = ()
-      def doSomethingOnFailure(t: Throwable) = ()
-      //#onComplete
-      future onComplete {
-        case Success(result)  ⇒ doSomethingOnSuccess(result)
-        case Failure(failure) ⇒ doSomethingOnFailure(failure)
-      }
-      //#onComplete
-      Await.result(future, 3 seconds) should be("foo")
-    }
+    //#onComplete
+    Await.result(future, 3 seconds) should be("foo")
   }
 
   "demonstrate usage of Future.successful & Future.failed & Future.promise" in {
@@ -427,6 +490,27 @@ class FutureDocSpec extends AkkaSpec {
     val result = Future firstCompletedOf Seq(future, delayed)
     //#after
     intercept[IllegalStateException] { Await.result(result, 2 second) }
+  }
+
+  "demonstrate pattern.retry" in {
+    //#retry
+    implicit val scheduler = system.scheduler
+    //Given some future that will succeed eventually
+    @volatile var failCount = 0
+    def attempt() = {
+      if (failCount < 5) {
+        failCount += 1
+        Future.failed(new IllegalStateException(failCount.toString))
+      } else Future.successful(5)
+    }
+    //Return a new future that will retry up to 10 times
+    val retried = akka.pattern.retry(
+      () ⇒ attempt(),
+      10,
+      100 milliseconds)
+    //#retry
+
+    Await.result(retried, 1 second) should ===(5)
   }
 
   "demonstrate context.dispatcher" in {

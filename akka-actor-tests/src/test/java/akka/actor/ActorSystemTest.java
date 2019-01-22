@@ -1,6 +1,7 @@
- /**
-  * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
-  */ 
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
+ */
+
 package akka.actor;
 
 import akka.testkit.AkkaJUnitActorSystemResource;
@@ -18,7 +19,7 @@ public class ActorSystemTest extends JUnitSuite {
 
   @Rule
   public final AkkaJUnitActorSystemResource actorSystemResource =
-    new AkkaJUnitActorSystemResource("ActorSystemTest");
+      new AkkaJUnitActorSystemResource("ActorSystemTest");
 
   private ActorSystem system = null;
 

@@ -1,5 +1,5 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package docs.io
@@ -22,7 +22,7 @@ final case class Inet6ProtocolFamily() extends DatagramChannelCreator {
 
 //#multicast-group
 final case class MulticastGroup(address: String, interface: String) extends SocketOptionV2 {
-  override def afterBind(s: DatagramSocket) {
+  override def afterBind(s: DatagramSocket): Unit = {
     val group = InetAddress.getByName(address)
     val networkInterface = NetworkInterface.getByName(interface)
     s.getChannel.join(group, networkInterface)

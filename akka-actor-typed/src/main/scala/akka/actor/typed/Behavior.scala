@@ -1,15 +1,18 @@
-/**
- * Copyright (C) 2014-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2014-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.actor.typed
 
 import akka.actor.InvalidMessageException
+import akka.actor.typed.internal.BehaviorImpl
 
 import scala.annotation.tailrec
-import akka.util.LineNumbers
-import akka.annotation.{ DoNotInherit, InternalApi }
+import akka.actor.typed.internal.BehaviorImpl.OrElseBehavior
+import akka.actor.typed.internal.WrappingBehavior
+import akka.util.{ LineNumbers, OptionVal }
+import akka.annotation.{ ApiMayChange, DoNotInherit, InternalApi }
 import akka.actor.typed.scaladsl.{ ActorContext ⇒ SAC }
-import akka.util.OptionVal
 
 /**
  * The behavior of an actor defines how it reacts to the messages that it
@@ -31,22 +34,64 @@ import akka.util.OptionVal
  *
  * Not for user extension.
  */
-@InternalApi
+@ApiMayChange
 @DoNotInherit
-sealed abstract class Behavior[T] {
+abstract class Behavior[T] { behavior ⇒
   /**
    * Narrow the type of this Behavior, which is always a safe operation. This
    * method is necessary to implement the contravariant nature of Behavior
    * (which cannot be expressed directly due to type inference problems).
    */
   final def narrow[U <: T]: Behavior[U] = this.asInstanceOf[Behavior[U]]
+
+  /**
+   * INTERNAL API
+   *
+   * Unsafe utility method for changing the type accepted by this Behavior;
+   * provided as an alternative to the universally available `asInstanceOf`, which
+   * casts the entire type rather than just the type parameter.
+   * Typically used to upcast a type, for instance from `Nothing` to some type `U`.
+   * Use it with caution, it may lead to a [[ClassCastException]] when you send a message
+   * to the resulting [[Behavior[U]]].
+   */
+  @InternalApi private[akka] final def unsafeCast[U]: Behavior[U] = this.asInstanceOf[Behavior[U]]
+
+  /**
+   * Composes this `Behavior with a fallback `Behavior` which
+   * is used when this `Behavior` doesn't handle the message or signal, i.e.
+   * when `unhandled` is returned.
+   *
+   *  @param that the fallback `Behavior`
+   */
+  final def orElse(that: Behavior[T]): Behavior[T] = Behavior.DeferredBehavior[T] { ctx ⇒
+    new OrElseBehavior[T](Behavior.start(this, ctx), Behavior.start(that, ctx))
+  }
 }
 
 /**
  * Extension point for implementing custom behaviors in addition to the existing
  * set of behaviors available through the DSLs in [[akka.actor.typed.scaladsl.Behaviors]] and [[akka.actor.typed.javadsl.Behaviors]]
+ *
+ * Note that behaviors that keep an inner behavior, and intercepts messages for it should not be implemented as
+ * an extensible behavior but should instead use the [[BehaviorInterceptor]]
  */
 abstract class ExtensibleBehavior[T] extends Behavior[T] {
+  /**
+   * Process an incoming message and return the next behavior.
+   *
+   * The returned behavior can in addition to normal behaviors be one of the
+   * canned special objects:
+   *
+   *  * returning `stopped` will terminate this Behavior
+   *  * returning `same` designates to reuse the current Behavior
+   *  * returning `unhandled` keeps the same Behavior and signals that the message was not yet handled
+   *
+   * Code calling this method should use [[Behavior$]] `canonicalize` to replace
+   * the special objects with real Behaviors.
+   */
+  @throws(classOf[Exception])
+  def receive(ctx: TypedActorContext[T], msg: T): Behavior[T]
+
   /**
    * Process an incoming [[Signal]] and return the next behavior. This means
    * that all lifecycle hooks, ReceiveTimeout, Terminated and Failed messages
@@ -63,27 +108,34 @@ abstract class ExtensibleBehavior[T] extends Behavior[T] {
    * the special objects with real Behaviors.
    */
   @throws(classOf[Exception])
-  def receiveSignal(ctx: ActorContext[T], msg: Signal): Behavior[T]
-
-  /**
-   * Process an incoming message and return the next behavior.
-   *
-   * The returned behavior can in addition to normal behaviors be one of the
-   * canned special objects:
-   *
-   *  * returning `stopped` will terminate this Behavior
-   *  * returning `same` designates to reuse the current Behavior
-   *  * returning `unhandled` keeps the same Behavior and signals that the message was not yet handled
-   *
-   * Code calling this method should use [[Behavior$]] `canonicalize` to replace
-   * the special objects with real Behaviors.
-   */
-  @throws(classOf[Exception])
-  def receiveMessage(ctx: ActorContext[T], msg: T): Behavior[T]
-
+  def receiveSignal(ctx: TypedActorContext[T], msg: Signal): Behavior[T]
 }
 
 object Behavior {
+
+  final implicit class BehaviorDecorators[T](val behavior: Behavior[T]) extends AnyVal {
+    /**
+     * Widen the wrapped Behavior by placing a funnel in front of it: the supplied
+     * PartialFunction decides which message to pull in (those that it is defined
+     * at) and may transform the incoming message to place them into the wrapped
+     * Behavior’s type hierarchy. Signals are not transformed.
+     *
+     * Example:
+     * {{{
+     * receive[String] { (ctx, msg) => println(msg); same }.widen[Number] {
+     *   case b: BigDecimal => s"BigDecimal(&dollar;b)"
+     *   case i: BigInteger => s"BigInteger(&dollar;i)"
+     *   // all other kinds of Number will be `unhandled`
+     * }
+     * }}}
+     *
+     * Scheduled messages via [[akka.actor.typed.scaladsl.TimerScheduler]] can currently
+     * not be used together with `widen`, see issue #25318.
+     */
+    def widen[U](matcher: PartialFunction[U, T]): Behavior[U] =
+      BehaviorImpl.widened(behavior, matcher)
+
+  }
 
   /**
    * Return this behavior from message processing in order to advise the
@@ -91,14 +143,15 @@ object Behavior {
    * avoid the allocation overhead of recreating the current behavior where
    * that is not necessary.
    */
-  def same[T]: Behavior[T] = SameBehavior.asInstanceOf[Behavior[T]]
+  def same[T]: Behavior[T] = SameBehavior.unsafeCast[T]
+
   /**
    * Return this behavior from message processing in order to advise the
    * system to reuse the previous behavior, including the hint that the
    * message has not been handled. This hint may be used by composite
    * behaviors that delegate (partial) handling to other behaviors.
    */
-  def unhandled[T]: Behavior[T] = UnhandledBehavior.asInstanceOf[Behavior[T]]
+  def unhandled[T]: Behavior[T] = UnhandledBehavior.unsafeCast[T]
 
   /**
    * Return this behavior from message processing to signal that this actor
@@ -109,7 +162,7 @@ object Behavior {
    * current behavior. All other messages and signals will effectively be
    * ignored.
    */
-  def stopped[T]: Behavior[T] = StoppedBehavior.asInstanceOf[Behavior[T]]
+  def stopped[T]: Behavior[T] = StoppedBehavior.unsafeCast[T]
 
   /**
    * Return this behavior from message processing to signal that this actor
@@ -126,12 +179,12 @@ object Behavior {
   /**
    * A behavior that treats every incoming message as unhandled.
    */
-  def empty[T]: Behavior[T] = EmptyBehavior.asInstanceOf[Behavior[T]]
+  def empty[T]: Behavior[T] = EmptyBehavior.unsafeCast[T]
 
   /**
    * A behavior that ignores every incoming message and returns “same”.
    */
-  def ignore[T]: Behavior[T] = IgnoreBehavior.asInstanceOf[Behavior[T]]
+  def ignore[T]: Behavior[T] = IgnoreBehavior.unsafeCast[T]
 
   /**
    * INTERNAL API.
@@ -150,7 +203,7 @@ object Behavior {
   }
 
   /**
-   * INTERNAL API.
+   * INTERNAL API
    */
   @InternalApi
   private[akka] object UnhandledBehavior extends Behavior[Nothing] {
@@ -158,46 +211,49 @@ object Behavior {
   }
 
   /**
-   * INTERNAL API.
+   * INTERNAL API
    */
   @InternalApi
-  private[akka] abstract class UntypedBehavior[T] extends Behavior[T] {
-    /**
-     * INTERNAL API
-     */
-    @InternalApi private[akka] def untypedProps: akka.actor.Props
+  private[akka] def failed[T](cause: Throwable): Behavior[T] = new FailedBehavior(cause).asInstanceOf[Behavior[T]]
+
+  /**
+   * INTERNAL API
+   */
+  @InternalApi private[akka] val unhandledSignal: PartialFunction[(TypedActorContext[Nothing], Signal), Behavior[Nothing]] = {
+    case (_, _) ⇒ UnhandledBehavior
+  }
+
+  /**
+   * INTERNAL API
+   * Not placed in internal.BehaviorImpl because Behavior is sealed.
+   */
+  @InternalApi
+  private[akka] abstract class DeferredBehavior[T] extends Behavior[T] {
+    def apply(ctx: TypedActorContext[T]): Behavior[T]
+  }
+  /** INTERNAL API */
+  @InternalApi
+  private[akka] object DeferredBehavior {
+    def apply[T](factory: SAC[T] ⇒ Behavior[T]): Behavior[T] =
+      new DeferredBehavior[T] {
+        def apply(ctx: TypedActorContext[T]): Behavior[T] = factory(ctx.asScala)
+        override def toString: String = s"Deferred(${LineNumbers(factory)})"
+      }
   }
 
   /**
    * INTERNAL API
    */
-  @InternalApi private[akka] val unhandledSignal: PartialFunction[(ActorContext[Nothing], Signal), Behavior[Nothing]] = {
-    case (_, _) ⇒ UnhandledBehavior
-  }
-
-  /**
-   * INTERNAL API.
-   * Not placed in internal.BehaviorImpl because Behavior is sealed.
-   */
-  @InternalApi
-  private[akka] final case class DeferredBehavior[T](factory: SAC[T] ⇒ Behavior[T]) extends Behavior[T] {
-
-    /** start the deferred behavior */
-    @throws(classOf[Exception])
-    def apply(ctx: ActorContext[T]): Behavior[T] = factory(ctx.asScala)
-
-    override def toString: String = s"Deferred(${LineNumbers(factory)})"
-  }
-
-  /**
-   * INTERNAL API.
-   */
   private[akka] object SameBehavior extends Behavior[Nothing] {
     override def toString = "Same"
   }
 
+  private[akka] class FailedBehavior(val cause: Throwable) extends Behavior[Nothing] {
+    override def toString: String = s"Failed($cause)"
+  }
+
   /**
-   * INTERNAL API.
+   * INTERNAL API
    */
   private[akka] object StoppedBehavior extends StoppedBehavior[Nothing](OptionVal.None)
 
@@ -206,7 +262,23 @@ object Behavior {
    * that PostStop can be sent to previous behavior from `finishTerminate`.
    */
   private[akka] class StoppedBehavior[T](val postStop: OptionVal[Behavior[T]]) extends Behavior[T] {
-    override def toString = "Stopped"
+    validatePostStop(postStop)
+
+    @throws[IllegalArgumentException]
+    private final def validatePostStop(postStop: OptionVal[Behavior[T]]): Unit = {
+      postStop match {
+        case OptionVal.Some(b: DeferredBehavior[_]) ⇒
+          throw new IllegalArgumentException(s"Behavior used as `postStop` behavior in Stopped(...) was a deferred one [${b.toString}], which is not supported (it would never be evaluated).")
+        case _ ⇒ // all good
+      }
+    }
+
+    override def toString = "Stopped" + {
+      postStop match {
+        case OptionVal.Some(_) ⇒ "(postStop)"
+        case _                 ⇒ "()"
+      }
+    }
   }
 
   /**
@@ -216,7 +288,7 @@ object Behavior {
    * message or signal.
    */
   @tailrec
-  def canonicalize[T](behavior: Behavior[T], current: Behavior[T], ctx: ActorContext[T]): Behavior[T] =
+  def canonicalize[T](behavior: Behavior[T], current: Behavior[T], ctx: TypedActorContext[T]): Behavior[T] =
     behavior match {
       case SameBehavior                  ⇒ current
       case UnhandledBehavior             ⇒ current
@@ -233,25 +305,52 @@ object Behavior {
    */
   @InternalApi
   @tailrec
-  private[akka] def wrap[T, U](currentBehavior: Behavior[_], nextBehavior: Behavior[T], ctx: ActorContext[T])(f: Behavior[T] ⇒ Behavior[U]): Behavior[U] =
+  private[akka] def wrap[T, U](currentBehavior: Behavior[_], nextBehavior: Behavior[T], ctx: TypedActorContext[T])(f: Behavior[T] ⇒ Behavior[U]): Behavior[U] =
     nextBehavior match {
       case SameBehavior | `currentBehavior` ⇒ same
       case UnhandledBehavior                ⇒ unhandled
-      case StoppedBehavior                  ⇒ stopped
+      case stopped: StoppedBehavior[T]      ⇒ stopped.unsafeCast[U] // won't receive more messages so cast is safe
       case deferred: DeferredBehavior[T]    ⇒ wrap(currentBehavior, start(deferred, ctx), ctx)(f)
       case other                            ⇒ f(other)
     }
 
   /**
-   * Starts deferred behavior and nested deferred behaviors until a non deferred behavior is reached
-   * and that is then returned.
+   * Starts deferred behavior and nested deferred behaviors until all deferred behaviors in the stack are started
+   * and then the resulting behavior is returned.
    */
-  @tailrec
-  def start[T](behavior: Behavior[T], ctx: ActorContext[T]): Behavior[T] = {
+  def start[T](behavior: Behavior[T], ctx: TypedActorContext[T]): Behavior[T] = {
+    // TODO can this be made @tailrec?
     behavior match {
       case innerDeferred: DeferredBehavior[T] ⇒ start(innerDeferred(ctx), ctx)
-      case _                                  ⇒ behavior
+      case wrapped: WrappingBehavior[T, Any] @unchecked ⇒
+        // make sure that a deferred behavior wrapped inside some other behavior is also started
+        val startedInner = start(wrapped.nestedBehavior, ctx.asInstanceOf[TypedActorContext[Any]])
+        if (startedInner eq wrapped.nestedBehavior) wrapped
+        else wrapped.replaceNested(startedInner)
+      case _ ⇒ behavior
     }
+  }
+
+  /**
+   * Go through the behavior stack and apply a predicate to see if any nested behavior
+   * satisfies it. The stack must not contain any unstarted deferred behavior or an `IllegalArgumentException`
+   * will be thrown.
+   */
+  def existsInStack[T](behavior: Behavior[T])(p: Behavior[T] ⇒ Boolean): Boolean = {
+    @tailrec
+    def loop(b: Behavior[T]): Boolean =
+      b match {
+        case _ if p(b) ⇒ true
+        case wrappingBehavior: WrappingBehavior[T, T] @unchecked ⇒
+          loop(wrappingBehavior.nestedBehavior)
+        case d: DeferredBehavior[T] ⇒
+          throw new IllegalArgumentException(
+            "Cannot verify behavior existence when there are deferred in the behavior stack, " +
+              s"Behavior.start the stack first. This is probably a bug, please create an issue. $d")
+        case _ ⇒ false
+      }
+
+    loop(behavior)
   }
 
   /**
@@ -271,6 +370,7 @@ object Behavior {
    */
   def isAlive[T](behavior: Behavior[T]): Boolean = behavior match {
     case _: StoppedBehavior[_] ⇒ false
+    case _: FailedBehavior     ⇒ false
     case _                     ⇒ true
   }
 
@@ -290,34 +390,39 @@ object Behavior {
   /**
    * Execute the behavior with the given message
    */
-  def interpretMessage[T](behavior: Behavior[T], ctx: ActorContext[T], msg: T): Behavior[T] =
+  def interpretMessage[T](behavior: Behavior[T], ctx: TypedActorContext[T], msg: T): Behavior[T] =
     interpret(behavior, ctx, msg)
 
   /**
    * Execute the behavior with the given signal
    */
-  def interpretSignal[T](behavior: Behavior[T], ctx: ActorContext[T], signal: Signal): Behavior[T] =
-    interpret(behavior, ctx, signal)
+  def interpretSignal[T](behavior: Behavior[T], ctx: TypedActorContext[T], signal: Signal): Behavior[T] = {
+    val result = interpret(behavior, ctx, signal)
+    // we need to throw here to allow supervision of deathpact exception
+    signal match {
+      case Terminated(ref) if result == UnhandledBehavior ⇒ throw DeathPactException(ref)
+      case _ ⇒ result
+    }
+  }
 
-  private def interpret[T](behavior: Behavior[T], ctx: ActorContext[T], msg: Any): Behavior[T] =
+  private def interpret[T](behavior: Behavior[T], ctx: TypedActorContext[T], msg: Any): Behavior[T] = {
     behavior match {
-      case null ⇒ throw new InvalidMessageException("[null] is not an allowed message")
+      case null ⇒ throw new InvalidMessageException("[null] is not an allowed behavior")
       case SameBehavior | UnhandledBehavior ⇒
         throw new IllegalArgumentException(s"cannot execute with [$behavior] as behavior")
-      case _: UntypedBehavior[_] ⇒
-        throw new IllegalArgumentException(s"cannot wrap behavior [$behavior] in " +
-          "Behaviors.setup, Behaviors.supervise or similar")
       case d: DeferredBehavior[_] ⇒ throw new IllegalArgumentException(s"deferred [$d] should not be passed to interpreter")
-      case IgnoreBehavior         ⇒ SameBehavior.asInstanceOf[Behavior[T]]
+      case IgnoreBehavior         ⇒ Behavior.same[T]
       case s: StoppedBehavior[T]  ⇒ s
-      case EmptyBehavior          ⇒ UnhandledBehavior.asInstanceOf[Behavior[T]]
+      case f: FailedBehavior      ⇒ f
+      case EmptyBehavior          ⇒ Behavior.unhandled[T]
       case ext: ExtensibleBehavior[T] ⇒
         val possiblyDeferredResult = msg match {
           case signal: Signal ⇒ ext.receiveSignal(ctx, signal)
-          case m              ⇒ ext.receiveMessage(ctx, m.asInstanceOf[T])
+          case m              ⇒ ext.receive(ctx, m.asInstanceOf[T])
         }
         start(possiblyDeferredResult, ctx)
     }
+  }
 
   /**
    * INTERNAL API
@@ -325,16 +430,14 @@ object Behavior {
    * Execute the behavior with the given messages (or signals).
    * The returned [[Behavior]] from each processed message is used for the next message.
    */
-  @InternalApi private[akka] def interpretMessages[T](behavior: Behavior[T], ctx: ActorContext[T], messages: Iterator[T]): Behavior[T] = {
+  @InternalApi private[akka] def interpretMessages[T](behavior: Behavior[T], ctx: TypedActorContext[T], messages: Iterator[T]): Behavior[T] = {
     @tailrec def interpretOne(b: Behavior[T]): Behavior[T] = {
       val b2 = Behavior.start(b, ctx)
       if (!Behavior.isAlive(b2) || !messages.hasNext) b2
       else {
         val nextB = messages.next() match {
-          case sig: Signal ⇒
-            Behavior.interpretSignal(b2, ctx, sig)
-          case msg ⇒
-            Behavior.interpretMessage(b2, ctx, msg)
+          case sig: Signal ⇒ Behavior.interpretSignal(b2, ctx, sig)
+          case msg         ⇒ Behavior.interpretMessage(b2, ctx, msg)
         }
         interpretOne(Behavior.canonicalize(nextB, b, ctx)) // recursive
       }
@@ -344,3 +447,4 @@ object Behavior {
   }
 
 }
+

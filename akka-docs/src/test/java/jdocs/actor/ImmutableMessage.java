@@ -1,13 +1,14 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package jdocs.actor;
 
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
-//#immutable-message
+// #immutable-message
 public class ImmutableMessage {
   private final int sequenceNumber;
   private final List<String> values;
@@ -25,4 +26,4 @@ public class ImmutableMessage {
     return values;
   }
 }
-//#immutable-message
+// #immutable-message

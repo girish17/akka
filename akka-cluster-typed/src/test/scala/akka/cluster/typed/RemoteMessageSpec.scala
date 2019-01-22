@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2017-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2017-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.cluster.typed
 
 import java.nio.charset.StandardCharsets
@@ -46,8 +47,8 @@ object RemoteMessageSpec {
           "akka.cluster.typed.RemoteMessageSpec$$Ping" = test
         }
       }
+      remote.netty.tcp.port = 0
       remote.artery {
-        enabled = on
         canonical {
           hostname = 127.0.0.1
           port = 0
@@ -70,7 +71,7 @@ class RemoteMessageSpec extends AkkaSpec(RemoteMessageSpec.config) {
     "something something" in {
 
       val pingPromise = Promise[Done]()
-      val ponger = Behaviors.immutable[Ping]((_, msg) ⇒
+      val ponger = Behaviors.receive[Ping]((_, msg) ⇒
         msg match {
           case Ping(sender) ⇒
             pingPromise.success(Done)
@@ -91,7 +92,7 @@ class RemoteMessageSpec extends AkkaSpec(RemoteMessageSpec.config) {
           ActorRefResolver(typedSystem2).resolveActorRef[Ping](remoteRefStr)
 
         val pongPromise = Promise[Done]()
-        val recipient = system2.spawn(Behaviors.immutable[String] { (_, _) ⇒
+        val recipient = system2.spawn(Behaviors.receive[String] { (_, _) ⇒
           pongPromise.success(Done)
           Behaviors.stopped
         }, "recipient")

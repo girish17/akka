@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2014-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2014-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.stream.impl
 
 import java.util.concurrent.atomic.AtomicBoolean
@@ -43,13 +44,15 @@ import scala.concurrent.{ Await, ExecutionContextExecutor }
    * INTERNAL API
    */
   @InternalApi private[akka] override def actorOf(context: MaterializationContext, props: Props): ActorRef = {
-    val effectiveProps =
-      if (props.dispatcher == Dispatchers.DefaultDispatcherId)
+    val effectiveProps = props.dispatcher match {
+      case Dispatchers.DefaultDispatcherId ⇒
         props.withDispatcher(context.effectiveAttributes.mandatoryAttribute[ActorAttributes.Dispatcher].dispatcher)
-      else if (props.dispatcher == ActorAttributes.IODispatcher.dispatcher)
+      case ActorAttributes.IODispatcher.dispatcher ⇒
         // this one is actually not a dispatcher but a relative config key pointing containing the actual dispatcher name
         props.withDispatcher(settings.blockingIoDispatcher)
-      else props
+      case _ ⇒ props
+    }
+
     actorOf(effectiveProps, context.islandName)
   }
 
@@ -86,7 +89,7 @@ import scala.concurrent.{ Await, ExecutionContextExecutor }
 }
 
 /**
- * This materializer replaces the default phase with one that will fuse stages into an existing interpreter (via `registerShell`),
+ * This materializer replaces the default phase with one that will fuse operators into an existing interpreter (via `registerShell`),
  * rather than start a new actor for each of them.
  *
  * The default phases are left in-tact since we still respect `.async` and other tags that were marked within a sub-fused graph.
@@ -149,6 +152,7 @@ private[akka] class SubFusingActorMaterializerImpl(val delegate: ExtendedActorMa
 @InternalApi private[akka] object StreamSupervisor {
   def props(settings: ActorMaterializerSettings, haveShutDown: AtomicBoolean): Props =
     Props(new StreamSupervisor(settings, haveShutDown)).withDeploy(Deploy.local)
+      .withDispatcher(settings.dispatcher)
   private[stream] val baseName = "StreamSupervisor"
   private val actorName = SeqActorName(baseName)
   def nextName(): String = actorName.next()
@@ -174,7 +178,7 @@ private[akka] class SubFusingActorMaterializerImpl(val delegate: ExtendedActorMa
 @InternalApi private[akka] class StreamSupervisor(settings: ActorMaterializerSettings, haveShutDown: AtomicBoolean) extends Actor {
   import akka.stream.impl.StreamSupervisor._
 
-  override def supervisorStrategy = SupervisorStrategy.stoppingStrategy
+  override def supervisorStrategy: SupervisorStrategy = SupervisorStrategy.stoppingStrategy
 
   def receive = {
     case Materialize(props, name) ⇒

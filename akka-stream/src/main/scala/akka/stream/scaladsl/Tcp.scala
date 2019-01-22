@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.stream.scaladsl
 
 import java.net.InetSocketAddress
@@ -24,6 +25,7 @@ import scala.concurrent.Future
 import scala.concurrent.duration.{ Duration, FiniteDuration }
 import scala.util.Try
 import scala.util.control.NoStackTrace
+import scala.collection.immutable
 
 object Tcp extends ExtensionId[Tcp] with ExtensionIdProvider {
 
@@ -172,7 +174,7 @@ final class Tcp(system: ExtendedActorSystem) extends akka.actor.Extension {
    *
    * Note that the ByteString chunk boundaries are not retained across the network,
    * to achieve application level chunks you have to introduce explicit framing in your streams,
-   * for example using the [[Framing]] stages.
+   * for example using the [[Framing]] operators.
    *
    * @param remoteAddress The remote address to connect to
    * @param localAddress  Optional local address for the connection
@@ -217,7 +219,7 @@ final class Tcp(system: ExtendedActorSystem) extends akka.actor.Extension {
    *
    * Note that the ByteString chunk boundaries are not retained across the network,
    * to achieve application level chunks you have to introduce explicit framing in your streams,
-   * for example using the [[Framing]] stages.
+   * for example using the [[Framing]] operators.
    */
   def outgoingConnection(host: String, port: Int): Flow[ByteString, ByteString, Future[OutgoingConnection]] =
     outgoingConnection(InetSocketAddress.createUnresolved(host, port))

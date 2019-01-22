@@ -1,15 +1,14 @@
-/**
- * Copyright (C) 2014-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2014-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.actor.typed
 
-import akka.annotation.InternalApi
-import akka.{ actor ⇒ a }
-
+import akka.annotation.DoNotInherit
+import akka.{ actor ⇒ untyped }
 import scala.annotation.unchecked.uncheckedVariance
-import language.implicitConversions
-import scala.concurrent.Future
-import scala.util.Success
+
+import akka.actor.typed.internal.InternalRecipientRef
 
 /**
  * An ActorRef is the identity or address of an Actor instance. It is valid
@@ -19,8 +18,11 @@ import scala.util.Success
  * messages are delivered to the [[DeadLetter]] channel of the
  * [[akka.event.EventStream]] on a best effort basis
  * (i.e. this delivery is not reliable).
+ *
+ * Not for user extension
  */
-trait ActorRef[-T] extends java.lang.Comparable[ActorRef[_]] with java.io.Serializable {
+@DoNotInherit
+trait ActorRef[-T] extends RecipientRef[T] with java.lang.Comparable[ActorRef[_]] with java.io.Serializable { this: InternalRecipientRef[T] ⇒
   /**
    * Send a message to the Actor referenced by this ActorRef using *at-most-once*
    * messaging semantics.
@@ -35,9 +37,10 @@ trait ActorRef[-T] extends java.lang.Comparable[ActorRef[_]] with java.io.Serial
   /**
    * Unsafe utility method for widening the type accepted by this ActorRef;
    * provided to avoid having to use `asInstanceOf` on the full reference type,
-   * which would unfortunately also work on non-ActorRefs.
+   * which would unfortunately also work on non-ActorRefs. Use it with caution,it may cause a [[ClassCastException]] when you send a message
+   * to the widened [[ActorRef[U]]].
    */
-  def upcast[U >: T @uncheckedVariance]: ActorRef[U]
+  def unsafeUpcast[U >: T @uncheckedVariance]: ActorRef[U]
 
   /**
    * The hierarchical path name of the referenced Actor. The lifecycle of the
@@ -45,7 +48,7 @@ trait ActorRef[-T] extends java.lang.Comparable[ActorRef[_]] with java.io.Serial
    * and more than one Actor instance can exist with the same path at different
    * points in time, but not concurrently.
    */
-  def path: a.ActorPath
+  def path: untyped.ActorPath
 
   @throws(classOf[java.io.ObjectStreamException])
   private def writeReplace(): AnyRef = SerializedActorRef[T](this)
@@ -61,17 +64,6 @@ object ActorRef {
     def !(msg: T): Unit = ref.tell(msg)
   }
 
-  /**
-   * INTERNAL API
-   *
-   * FIXME, this isn't really used since we removed the native actor system
-   */
-  @InternalApi private[akka] def apply[T](f: Future[ActorRef[T]], bufferSize: Int = 1000): ActorRef[T] =
-    f.value match {
-      // an AdaptedActorSystem will always create refs eagerly, so it will take this path
-      case Some(Success(ref)) ⇒ ref
-      case _                  ⇒ throw new IllegalStateException("Only expecting completed futures until the native actor system is implemented")
-    }
 }
 
 /**
@@ -111,5 +103,29 @@ private[akka] final case class SerializedActorRef[T] private (address: String) {
     case someSystem ⇒
       val resolver = ActorRefResolver(someSystem.toTyped)
       resolver.resolveActorRef(address)
+  }
+}
+
+/**
+ * FIXME doc
+ * - not serializable
+ * - not watchable
+ */
+trait RecipientRef[-T] { this: InternalRecipientRef[T] ⇒
+  /**
+   * Send a message to the destination referenced by this `RecipientRef` using *at-most-once*
+   * messaging semantics.
+   */
+  def tell(msg: T): Unit
+}
+
+object RecipientRef {
+
+  implicit final class RecipientRefOps[-T](val ref: RecipientRef[T]) extends AnyVal {
+    /**
+     * Send a message to the destination referenced by this `RecipientRef` using *at-most-once*
+     * messaging semantics.
+     */
+    def !(msg: T): Unit = ref.tell(msg)
   }
 }

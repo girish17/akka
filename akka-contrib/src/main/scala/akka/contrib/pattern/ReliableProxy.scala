@@ -1,5 +1,5 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.contrib.pattern
@@ -271,7 +271,7 @@ class ReliableProxy(targetPath: ActorPath, retryAfter: FiniteDuration,
     case _ ⇒ SupervisorStrategy.Escalate
   }
 
-  override def postStop() {
+  override def postStop(): Unit = {
     logDebug("Stopping proxy and sending {} messages to subscribers in Unsent", stateData.size)
     gossip(ProxyTerminated(self, Unsent(stateData)))
     super.postStop()
@@ -381,7 +381,7 @@ class ReliableProxy(targetPath: ActorPath, retryAfter: FiniteDuration,
    *
    * This and nextBackoff are meant to be implemented by subclasses.
    */
-  def resetBackoff() {}
+  def resetBackoff(): Unit = {}
 
   /**
    * Returns the next retry interval duration.  By default each interval is the same, reconnectAfter.

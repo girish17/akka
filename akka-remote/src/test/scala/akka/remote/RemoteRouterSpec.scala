@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.remote
 
 import scala.collection.immutable
@@ -88,7 +89,7 @@ class RemoteRouterSpec extends AkkaSpec(s"""
     }""").withFallback(system.settings.config)
   val masterSystem = ActorSystem(masterSystemName, conf)
 
-  override def afterTermination() {
+  override def afterTermination(): Unit = {
     shutdown(masterSystem)
   }
 

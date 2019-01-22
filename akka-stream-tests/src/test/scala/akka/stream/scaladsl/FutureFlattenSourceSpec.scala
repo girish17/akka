@@ -1,15 +1,16 @@
-/**
- * Copyright (C) 2015-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2015-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.stream.scaladsl
 
 import java.util.concurrent.{ CompletableFuture, TimeUnit }
 
-import akka.Done
 import akka.stream._
 import akka.stream.stage.{ GraphStageLogic, GraphStageWithMaterializedValue }
-import akka.stream.testkit.Utils.{ TE, assertAllStagesStopped }
+import akka.stream.testkit.Utils.TE
 import akka.stream.testkit.{ StreamSpec, TestPublisher, TestSubscriber }
+import akka.stream.testkit.scaladsl.StreamTestKit._
 import akka.testkit.TestLatch
 
 import scala.concurrent.{ Await, Future, Promise }

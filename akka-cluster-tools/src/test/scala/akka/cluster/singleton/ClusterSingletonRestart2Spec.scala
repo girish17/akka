@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.cluster.singleton
 
 import scala.concurrent.duration._
@@ -12,7 +13,6 @@ import akka.actor.Props
 import akka.cluster.Cluster
 import akka.cluster.MemberStatus
 import akka.cluster.UniqueAddress
-import akka.remote.RARP
 import akka.testkit.AkkaSpec
 import akka.testkit.TestProbe
 import com.typesafe.config.ConfigFactory
@@ -32,6 +32,7 @@ class ClusterSingletonRestart2Spec extends AkkaSpec("""
   akka.cluster.roles = [singleton]
   akka.actor.provider = akka.cluster.ClusterActorRefProvider
   akka.cluster.auto-down-unreachable-after = 2s
+  akka.cluster.singleton.min-number-of-hand-over-retries = 5
   akka.remote {
     netty.tcp {
       hostname = "127.0.0.1"
@@ -61,10 +62,11 @@ class ClusterSingletonRestart2Spec extends AkkaSpec("""
         name = "echo")
 
     within(45.seconds) {
+      import akka.util.ccompat.imm._
       awaitAssert {
         Cluster(from) join Cluster(to).selfAddress
         Cluster(from).state.members.map(_.uniqueAddress) should contain(Cluster(from).selfUniqueAddress)
-        Cluster(from).state.members.map(_.status) should ===(Set(MemberStatus.Up))
+        Cluster(from).state.members.unsorted.map(_.status) should ===(Set(MemberStatus.Up))
       }
     }
   }

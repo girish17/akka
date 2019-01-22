@@ -1,5 +1,5 @@
-/**
- *  Copyright (C) 2016-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2016-2019 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.dispatch.affinity
@@ -9,7 +9,7 @@ import java.lang.invoke.MethodType.methodType
 import java.util.Collections
 import java.util.concurrent.TimeUnit.MICROSECONDS
 import java.util.concurrent._
-import java.util.concurrent.atomic.{ AtomicInteger, AtomicReference }
+import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.locks.LockSupport
 import java.lang.Integer.reverseBytes
 
@@ -325,7 +325,7 @@ private[akka] final class AffinityPoolConfigurator(config: Config, prerequisites
   private val queueSelectorFactory: QueueSelectorFactory =
     prerequisites.dynamicAccess.createInstanceFor[QueueSelectorFactory](queueSelectorFactoryFQCN, immutable.Seq(classOf[Config] → config))
       .recover({
-        case exception ⇒ throw new IllegalArgumentException(
+        case _ ⇒ throw new IllegalArgumentException(
           s"Cannot instantiate QueueSelectorFactory(queueSelector = $queueSelectorFactoryFQCN), make sure it has an accessible constructor which accepts a Config parameter")
       }).get
 
@@ -337,15 +337,23 @@ private[akka] final class AffinityPoolConfigurator(config: Config, prerequisites
         exception)
     }).get
 
-  override def createExecutorServiceFactory(id: String, threadFactory: ThreadFactory): ExecutorServiceFactory =
+  override def createExecutorServiceFactory(id: String, threadFactory: ThreadFactory): ExecutorServiceFactory = {
+    val tf = threadFactory match {
+      case m: MonitorableThreadFactory ⇒
+        // add the dispatcher id to the thread names
+        m.withName(m.name + "-" + id)
+      case other ⇒ other
+    }
+
     new ExecutorServiceFactory {
       override def createExecutorService: ExecutorService =
-        new AffinityPool(id, poolSize, taskQueueSize, threadFactory, idleCpuLevel, queueSelectorFactory.create(), rejectionHandlerFactory.create()).start()
+        new AffinityPool(id, poolSize, taskQueueSize, tf, idleCpuLevel, queueSelectorFactory.create(), rejectionHandlerFactory.create()).start()
     }
+  }
 }
 
 trait RejectionHandler {
-  def reject(command: Runnable, service: ExecutorService)
+  def reject(command: Runnable, service: ExecutorService): Unit
 }
 
 trait RejectionHandlerFactory {
@@ -393,7 +401,7 @@ private[akka] final class FairDistributionHashCache( final val config: Config) e
 
   override final def create(): QueueSelector = new AtomicReference[ImmutableIntMap](ImmutableIntMap.empty) with QueueSelector {
     override def toString: String = s"FairDistributionHashCache(fairDistributionThreshold = $fairDistributionThreshold)"
-    private[this] final def improve(h: Int): Int = Math.abs(reverseBytes(h * 0x9e3775cd) * 0x9e3775cd) // `sbhash`: In memory of Phil Bagwell.
+    private[this] final def improve(h: Int): Int = 0x7FFFFFFF & (reverseBytes(h * 0x9e3775cd) * 0x9e3775cd) // `sbhash`: In memory of Phil Bagwell.
     override final def getQueue(command: Runnable, queues: Int): Int = {
       val runnableHash = command.hashCode()
       if (fairDistributionThreshold == 0)

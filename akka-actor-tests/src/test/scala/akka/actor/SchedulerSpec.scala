@@ -1,5 +1,5 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.actor
@@ -8,7 +8,7 @@ import language.postfixOps
 import java.io.Closeable
 import java.util.concurrent._
 import atomic.{ AtomicReference, AtomicInteger }
-import scala.concurrent.{ future, Await, ExecutionContext }
+import scala.concurrent.{ Future, Await, ExecutionContext }
 import scala.concurrent.duration._
 import java.util.concurrent.ThreadLocalRandom
 import scala.util.Try
@@ -105,12 +105,12 @@ trait SchedulerSpec extends BeforeAndAfterEach with DefaultTimeout with Implicit
 
       // should not be run immediately
       assert(countDownLatch.await(100, TimeUnit.MILLISECONDS) == false)
-      countDownLatch.getCount should ===(3)
+      countDownLatch.getCount should ===(3L)
 
       // after 1 second the wait should fail
       assert(countDownLatch.await(2, TimeUnit.SECONDS) == false)
       // should still be 1 left
-      countDownLatch.getCount should ===(1)
+      countDownLatch.getCount should ===(1L)
     }
 
     /**
@@ -378,7 +378,7 @@ class LightArrayRevolverSchedulerSpec extends AkkaSpec(SchedulerSpec.testConfRev
         import driver._
         import system.dispatcher
         val counter = new AtomicInteger
-        val terminated = future {
+        val terminated = Future {
           var rounds = 0
           while (Try(sched.scheduleOnce(Duration.Zero)(())(localEC)).isSuccess) {
             Thread.sleep(1)
@@ -511,7 +511,7 @@ class LightArrayRevolverSchedulerSpec extends AkkaSpec(SchedulerSpec.testConfRev
       withScheduler() { (sched, driver) ⇒
         import system.dispatcher
         val counter = new AtomicInteger
-        future { Thread.sleep(5); driver.close(); sched.close() }
+        Future { Thread.sleep(5); driver.close(); sched.close() }
         val headroom = 200
         var overrun = headroom
         val cap = 1000000
@@ -531,15 +531,15 @@ class LightArrayRevolverSchedulerSpec extends AkkaSpec(SchedulerSpec.testConfRev
   trait Driver {
     def wakeUp(d: FiniteDuration): Unit
     def expectWait(): FiniteDuration
-    def expectWait(d: FiniteDuration) { expectWait() should ===(d) }
+    def expectWait(d: FiniteDuration): Unit = { expectWait() should ===(d) }
     def probe: TestProbe
     def step: FiniteDuration
     def close(): Unit
   }
 
   val localEC = new ExecutionContext {
-    def execute(runnable: Runnable) { runnable.run() }
-    def reportFailure(t: Throwable) { t.printStackTrace() }
+    def execute(runnable: Runnable): Unit = { runnable.run() }
+    def reportFailure(t: Throwable): Unit = { t.printStackTrace() }
   }
 
   def withScheduler(start: Long = 0L, _startTick: Int = 0, config: Config = ConfigFactory.empty)(thunk: (Scheduler with Closeable, Driver) ⇒ Unit): Unit = {

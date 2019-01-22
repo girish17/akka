@@ -1,20 +1,19 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <http://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package docs.akka.typed
 
 import akka.actor.typed.scaladsl.Behaviors
-import akka.actor.typed.{ DeathPactException, SupervisorStrategy, TypedAkkaSpecWithShutdown }
-import akka.testkit.typed.scaladsl.ActorTestKit
-import com.typesafe.config.ConfigFactory
+import akka.actor.typed.{ DeathPactException, SupervisorStrategy }
+import akka.actor.testkit.typed.scaladsl.ScalaTestWithActorTestKit
+import org.scalatest.WordSpecLike
 
-class FaultToleranceDocSpec extends ActorTestKit with TypedAkkaSpecWithShutdown {
-
-  override def config = ConfigFactory.parseString(
-    """
+class FaultToleranceDocSpec extends ScalaTestWithActorTestKit(
+  """
       # silenced to not put noise in test logs
-      akka.loglevel = OFF
-    """)
+      akka.loglevel = off
+    """) with WordSpecLike {
 
   "Bubbling of failures" must {
 
@@ -26,36 +25,36 @@ class FaultToleranceDocSpec extends ActorTestKit with TypedAkkaSpecWithShutdown 
       sealed trait Message
       case class Fail(text: String) extends Message
 
-      val worker = Behaviors.immutable[Message] { (ctx, msg) ⇒
-        msg match {
+      val worker = Behaviors.receive[Message] { (context, message) ⇒
+        message match {
           case Fail(text) ⇒ throw new RuntimeException(text)
         }
       }
 
-      val middleManagementBehavior = Behaviors.setup[Message] { ctx ⇒
-        ctx.log.info("Middle management starting up")
-        val child = ctx.spawn(worker, "child")
-        ctx.watch(child)
+      val middleManagementBehavior = Behaviors.setup[Message] { context ⇒
+        context.log.info("Middle management starting up")
+        val child = context.spawn(worker, "child")
+        context.watch(child)
 
         // here we don't handle Terminated at all which means that
         // when the child fails or stops gracefully this actor will
         // fail with a DeathWatchException
-        Behaviors.immutable[Message] { (ctx, msg) ⇒
-          child ! msg
+        Behaviors.receive[Message] { (context, message) ⇒
+          child ! message
           Behaviors.same
         }
       }
 
-      val bossBehavior = Behaviors.supervise(Behaviors.setup[Message] { ctx ⇒
-        ctx.log.info("Boss starting up")
-        val middleManagment = ctx.spawn(middleManagementBehavior, "middle-management")
-        ctx.watch(middleManagment)
+      val bossBehavior = Behaviors.supervise(Behaviors.setup[Message] { context ⇒
+        context.log.info("Boss starting up")
+        val middleManagement = context.spawn(middleManagementBehavior, "middle-management")
+        context.watch(middleManagement)
 
         // here we don't handle Terminated at all which means that
         // when middle management fails with a DeathWatchException
         // this actor will also fail
-        Behaviors.immutable[Message] { (ctx, msg) ⇒
-          middleManagment ! msg
+        Behaviors.receiveMessage[Message] { message ⇒
+          middleManagement ! message
           Behaviors.same
         }
       }).onFailure[DeathPactException](SupervisorStrategy.restart)

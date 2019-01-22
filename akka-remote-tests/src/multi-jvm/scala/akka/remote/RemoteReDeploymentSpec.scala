@@ -1,12 +1,10 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.remote
 
 import akka.remote.testkit.MultiNodeConfig
-import akka.remote.testkit.MultiNodeSpec
-import akka.remote.testkit.STMultiNodeSpec
-import akka.testkit.ImplicitSender
 import akka.actor.Actor
 import akka.actor.ActorRef
 import akka.actor.Props
@@ -19,7 +17,6 @@ import scala.concurrent.duration._
 import akka.actor.ActorIdentity
 import akka.actor.ActorLogging
 import akka.actor.Identify
-import akka.remote.testconductor.TestConductor
 import akka.testkit.TestProbe
 
 class RemoteReDeploymentConfig(artery: Boolean) extends MultiNodeConfig {

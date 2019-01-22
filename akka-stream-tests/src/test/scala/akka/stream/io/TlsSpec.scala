@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2018-2019 Lightbend Inc. <https://www.lightbend.com>
+ */
+
 package akka.stream.io
 
 import java.security.KeyStore
@@ -19,10 +23,9 @@ import akka.stream.TLSProtocol._
 import akka.stream.scaladsl._
 import akka.stream.stage._
 import akka.stream.testkit._
-import akka.stream.testkit.Utils._
-import akka.util.ByteString
+import akka.stream.testkit.scaladsl.StreamTestKit._
+import akka.util.{ ByteString, JavaVersion }
 import javax.net.ssl._
-
 import akka.stream.impl.fusing.GraphStages.SimpleLinearGraphStage
 import akka.testkit.WithLogCapturing
 
@@ -53,7 +56,7 @@ object TlsSpec {
   def initSslContext(): SSLContext = initWithTrust("/truststore")
 
   /**
-   * This is a stage that fires a TimeoutException failure 2 seconds after it was started,
+   * This is an operator that fires a TimeoutException failure 2 seconds after it was started,
    * independent of the traffic going through. The purpose is to include the last seen
    * element in the exception message to help in figuring out what went wrong.
    */
@@ -84,7 +87,7 @@ object TlsSpec {
 
   val configOverrides =
     """
-      akka.loglevel = DEBUG
+      akka.loglevel = DEBUG # issue 21660
       akka.loggers = ["akka.testkit.SilenceAllTestEventListener"]
       akka.actor.debug.receive=off
     """
@@ -219,14 +222,14 @@ class TlsSpec extends StreamSpec(TlsSpec.configOverrides) with WithLogCapturing 
     object MediumMessages extends PayloadScenario {
       val strs = "0123456789" map (d ⇒ d.toString * (rnd.nextInt(9000) + 1000))
       def inputs = strs map (s ⇒ SendBytes(ByteString(s)))
-      def output = ByteString((strs :\ "")(_ ++ _))
+      def output = ByteString(strs.foldRight("")(_ ++ _))
     }
 
     object LargeMessages extends PayloadScenario {
       // TLS max packet size is 16384 bytes
       val strs = "0123456789" map (d ⇒ d.toString * (rnd.nextInt(9000) + 17000))
       def inputs = strs map (s ⇒ SendBytes(ByteString(s)))
-      def output = ByteString((strs :\ "")(_ ++ _))
+      def output = ByteString(strs.foldRight("")(_ ++ _))
     }
 
     object EmptyBytesFirst extends PayloadScenario {
@@ -405,7 +408,11 @@ class TlsSpec extends StreamSpec(TlsSpec.configOverrides) with WithLogCapturing 
         .join(Tcp().outgoingConnection(Await.result(server, 1.second).localAddress)).run()
 
       Await.result(serverErr, 1.second).getMessage should include("certificate_unknown")
-      Await.result(clientErr, 1.second).getMessage should equal("General SSLEngine problem")
+      val clientErrText = Await.result(clientErr, 1.second).getMessage
+      if (JavaVersion.majorVersion >= 11)
+        clientErrText should include("unable to find valid certification path to requested target")
+      else
+        clientErrText should equal("General SSLEngine problem")
     }
 
     "reliably cancel subscriptions when TransportIn fails early" in assertAllStagesStopped {

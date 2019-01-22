@@ -1,18 +1,17 @@
-/**
- * Copyright (C) 2017-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2017-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.actor.typed.scaladsl.adapter
 
 import scala.concurrent.duration._
 import scala.util.control.NoStackTrace
 import akka.actor.typed.{ ActorRef, ActorSystem, Behavior, Terminated }
-import akka.actor.{ InvalidMessageException, Props }
+import akka.actor.InvalidMessageException
+import akka.actor.testkit.typed.TE
 import akka.actor.typed.scaladsl.Behaviors
 import akka.{ Done, NotUsed, actor ⇒ untyped }
 import akka.testkit._
-import akka.actor.typed.Behavior.UntypedBehavior
-
-import scala.concurrent.Await
 
 object AdapterSpec {
   val untyped1: untyped.Props = untyped.Props(new Untyped1)
@@ -33,40 +32,48 @@ object AdapterSpec {
   }
 
   def typed1(ref: untyped.ActorRef, probe: ActorRef[String]): Behavior[String] =
-    Behaviors.immutable[String] {
-      (ctx, msg) ⇒
-        msg match {
+    Behaviors.receive[String] {
+      (context, message) ⇒
+        message match {
           case "send" ⇒
-            val replyTo = ctx.self.toUntyped
+            val replyTo = context.self.toUntyped
             ref.tell("ping", replyTo)
             Behaviors.same
           case "pong" ⇒
             probe ! "ok"
             Behaviors.same
           case "actorOf" ⇒
-            val child = ctx.actorOf(untyped1)
-            child.tell("ping", ctx.self.toUntyped)
+            val child = context.actorOf(untyped1)
+            child.tell("ping", context.self.toUntyped)
             Behaviors.same
           case "watch" ⇒
-            ctx.watch(ref)
+            context.watch(ref)
             Behaviors.same
           case "supervise-stop" ⇒
-            val child = ctx.actorOf(untyped1)
-            ctx.watch(child)
+            val child = context.actorOf(untyped1)
+            context.watch(child)
             child ! ThrowIt3
-            child.tell("ping", ctx.self.toUntyped)
+            child.tell("ping", context.self.toUntyped)
             Behaviors.same
           case "stop-child" ⇒
-            val child = ctx.actorOf(untyped1)
-            ctx.watch(child)
-            ctx.stop(child)
+            val child = context.actorOf(untyped1)
+            context.watch(child)
+            context.stop(child)
             Behaviors.same
         }
-    } onSignal {
-      case (ctx, Terminated(ref)) ⇒
+    } receiveSignal {
+      case (context, Terminated(ref)) ⇒
         probe ! "terminated"
         Behaviors.same
     }
+
+  def unhappyTyped(msg: String): Behavior[String] = Behaviors.setup[String] { ctx ⇒
+    val child = ctx.spawnAnonymous(Behaviors.receiveMessage[String] { _ ⇒
+      throw TE(msg)
+    })
+    child ! "throw please"
+    Behaviors.empty
+  }
 
   sealed trait Typed2Msg
   final case class Ping(replyTo: ActorRef[String]) extends Typed2Msg
@@ -131,8 +138,8 @@ object AdapterSpec {
   }
 
   def typed2: Behavior[Typed2Msg] =
-    Behaviors.immutable { (ctx, msg) ⇒
-      msg match {
+    Behaviors.receive { (context, message) ⇒
+      message match {
         case Ping(replyTo) ⇒
           replyTo ! "pong"
           Behaviors.same
@@ -147,7 +154,10 @@ object AdapterSpec {
 
 }
 
-class AdapterSpec extends AkkaSpec {
+class AdapterSpec extends AkkaSpec(
+  """
+   akka.loggers = [akka.testkit.TestEventListener]
+  """) {
   import AdapterSpec._
 
   "ActorSystem adaption" must {
@@ -171,9 +181,9 @@ class AdapterSpec extends AkkaSpec {
       for { _ ← 0 to 10 } {
         var system: akka.actor.typed.ActorSystem[Done] = null
         try {
-          system = ActorSystem.create(Behaviors.immutable[Done] { (ctx, msg) ⇒
-            ctx.self ! Done
-            msg match {
+          system = ActorSystem.create(Behaviors.receive[Done] { (context, message) ⇒
+            context.self ! Done
+            message match {
               case Done ⇒ Behaviors.stopped
             }
 
@@ -258,29 +268,40 @@ class AdapterSpec extends AkkaSpec {
       val ign = system.spawnAnonymous(Behaviors.ignore[Ping])
       val untypedRef = system.actorOf(untyped2(ign, probe.ref))
 
-      untypedRef ! "supervise-stop"
-      probe.expectMsg("thrown-stop")
-      // ping => ok should not get through here
-      probe.expectMsg("terminated")
+      EventFilter[AdapterSpec.ThrowIt1.type](occurrences = 1).intercept {
+        EventFilter.warning(pattern = """.*received dead letter.*""", occurrences = 1).intercept {
+          untypedRef ! "supervise-stop"
+          probe.expectMsg("thrown-stop")
+          // ping => ok should not get through here
+          probe.expectMsg("terminated")
+        }
+      }
 
       untypedRef ! "supervise-resume"
       probe.expectMsg("thrown-resume")
       probe.expectMsg("ok")
 
-      untypedRef ! "supervise-restart"
-      probe.expectMsg("thrown-restart")
-      probe.expectMsg("ok")
+      EventFilter[AdapterSpec.ThrowIt3.type](occurrences = 1).intercept {
+        untypedRef ! "supervise-restart"
+        probe.expectMsg("thrown-restart")
+        probe.expectMsg("ok")
+      }
     }
 
     "supervise untyped child from typed parent" in {
+      // FIXME there's a warning with null logged from the untyped empty child here, where does that come from?
       val probe = TestProbe()
       val ignore = system.actorOf(untyped.Props.empty)
       val typedRef = system.spawnAnonymous(typed1(ignore, probe.ref))
 
       // only stop supervisorStrategy
-      typedRef ! "supervise-stop"
-      probe.expectMsg("terminated")
-      probe.expectNoMsg(100.millis) // no pong
+      EventFilter[AdapterSpec.ThrowIt3.type](occurrences = 1).intercept {
+        EventFilter.warning(pattern = """.*received dead letter.*""", occurrences = 1).intercept {
+          typedRef ! "supervise-stop"
+          probe.expectMsg("terminated")
+          probe.expectNoMessage(100.millis) // no pong
+        }
+      }
     }
 
     "stop typed child from untyped parent" in {
@@ -299,24 +320,12 @@ class AdapterSpec extends AkkaSpec {
       probe.expectMsg("terminated")
     }
 
-    "spawn untyped behavior anonymously" in {
-      val probe = TestProbe()
-      val untypedBehavior: Behavior[String] = new UntypedBehavior[String] {
-        override private[akka] def untypedProps: Props = untypedForwarder(probe.ref)
+    "log exception if not by handled typed supervisor" in {
+      val throwMsg = "sad panda"
+      EventFilter.warning(pattern = ".*sad panda.*").intercept {
+        system.spawnAnonymous(unhappyTyped(throwMsg))
+        Thread.sleep(1000)
       }
-      val ref = system.spawnAnonymous(untypedBehavior)
-      ref ! "hello"
-      probe.expectMsg("hello")
-    }
-
-    "spawn untyped behavior" in {
-      val probe = TestProbe()
-      val untypedBehavior: Behavior[String] = new UntypedBehavior[String] {
-        override private[akka] def untypedProps: Props = untypedForwarder(probe.ref)
-      }
-      val ref = system.spawn(untypedBehavior, "test")
-      ref ! "hello"
-      probe.expectMsg("hello")
     }
   }
 }

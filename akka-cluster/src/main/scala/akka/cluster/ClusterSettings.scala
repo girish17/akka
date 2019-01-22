@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.cluster
 
 import scala.collection.immutable
@@ -37,7 +38,8 @@ final class ClusterSettings(val config: Config, val systemName: String) {
   import ClusterSettings._
   private val cc = config.getConfig("akka.cluster")
 
-  val LogInfo: Boolean = cc.getBoolean("log-info")
+  val LogInfoVerbose: Boolean = cc.getBoolean("log-info-verbose")
+  val LogInfo: Boolean = LogInfoVerbose || cc.getBoolean("log-info")
   val FailureDetectorConfig: Config = cc.getConfig("failure-detector")
   val FailureDetectorImplementationClass: String = FailureDetectorConfig.getString("implementation-class")
   val HeartbeatInterval: FiniteDuration = {
@@ -104,6 +106,9 @@ final class ClusterSettings(val config: Config, val systemName: String) {
     }
   }
 
+  /**
+   * Is in fact always a `FiniteDuration` but needs to stay `Duration` for binary compatibility
+   */
   val PruneGossipTombstonesAfter: Duration = {
     val key = "prune-gossip-tombstones-after"
     cc.getMillisDuration(key) requiring (_ >= Duration.Zero, key + " >= 0s")
@@ -135,7 +140,7 @@ final class ClusterSettings(val config: Config, val systemName: String) {
   val DowningProviderClassName: String = {
     val name = cc.getString("downing-provider-class")
     if (name.nonEmpty) name
-    else if (AutoDownUnreachableAfter.isFinite()) classOf[AutoDowning].getName
+    else if (AutoDownUnreachableAfter.isFinite) classOf[AutoDowning].getName
     else classOf[NoDowning].getName
   }
 

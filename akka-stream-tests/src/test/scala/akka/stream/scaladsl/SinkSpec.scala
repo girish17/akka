@@ -1,18 +1,23 @@
-/**
- * Copyright (C) 2015-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2015-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.stream.scaladsl
 
 import java.util
 import java.util.function
-import java.util.function.{ BinaryOperator, BiConsumer, Supplier, ToIntFunction }
+import java.util.function.{ BiConsumer, BinaryOperator, Supplier, ToIntFunction }
 import java.util.stream.Collector.Characteristics
 import java.util.stream.{ Collector, Collectors }
+
 import akka.stream._
 import akka.stream.testkit.Utils._
 import akka.stream.testkit._
+import akka.stream.testkit.scaladsl.TestSink
 import akka.testkit.DefaultTimeout
+import org.reactivestreams.Publisher
 import org.scalatest.concurrent.ScalaFutures
+
 import scala.concurrent.{ Await, Future }
 import scala.concurrent.duration._
 
@@ -222,22 +227,22 @@ class SinkSpec extends StreamSpec with DefaultTimeout with ScalaFutures {
       Source(1 to 100).runWith(StreamConverters
         .javaCollectorParallelUnordered(4)(
           () ⇒ Collectors.summingInt[Int](intIdentity)))
-        .futureValue should ===(5050)
+        .futureValue.toInt should ===(5050)
     }
 
     "be reusable" in {
       val sink = StreamConverters.javaCollector[Int, Integer](() ⇒ Collectors.summingInt[Int](intIdentity))
-      Source(1 to 4).runWith(sink).futureValue should ===(10)
+      Source(1 to 4).runWith(sink).futureValue.toInt should ===(10)
 
       // Collector has state so it preserves all previous elements that went though
-      Source(4 to 6).runWith(sink).futureValue should ===(15)
+      Source(4 to 6).runWith(sink).futureValue.toInt should ===(15)
     }
 
     "be reusable with parallel version" in {
       val sink = StreamConverters.javaCollectorParallelUnordered(4)(() ⇒ Collectors.summingInt[Int](intIdentity))
 
-      Source(1 to 4).runWith(sink).futureValue should ===(10)
-      Source(4 to 6).runWith(sink).futureValue should ===(15)
+      Source(1 to 4).runWith(sink).futureValue.toInt should ===(10)
+      Source(4 to 6).runWith(sink).futureValue.toInt should ===(15)
     }
 
     "fail if getting the supplier fails" in {
@@ -317,4 +322,66 @@ class SinkSpec extends StreamSpec with DefaultTimeout with ScalaFutures {
       matVal.failed.futureValue shouldBe a[AbruptStageTerminationException]
     }
   }
+
+  "The reduce sink" must {
+    "sum up 1 to 10 correctly" in {
+      //#reduce-operator-example
+      val source = Source(1 to 10)
+      val result = source.runWith(Sink.reduce[Int]((a, b) ⇒ a + b))
+      result.map(println)(system.dispatcher)
+      // 55
+      //#reduce-operator-example
+      assert(result.futureValue == (1 to 10 sum))
+    }
+  }
+
+  "Sink pre-materialization" must {
+    "materialize the sink and wrap its exposed publisher in a Source" in {
+      val publisherSink: Sink[String, Publisher[String]] = Sink.asPublisher[String](false)
+      val (matPub, sink) = publisherSink.preMaterialize()
+
+      val probe = Source.fromPublisher(matPub).runWith(TestSink.probe)
+      probe.expectNoMessage(100.millis)
+
+      Source.single("hello").runWith(sink)
+
+      probe.ensureSubscription()
+      probe.requestNext("hello")
+      probe.expectComplete()
+    }
+    "materialize the sink and wrap its exposed publisher(fanout) in a Source twice" in {
+      val publisherSink: Sink[String, Publisher[String]] = Sink.asPublisher[String](fanout = true)
+      val (matPub, sink) = publisherSink.preMaterialize()
+
+      val probe1 = Source.fromPublisher(matPub).runWith(TestSink.probe)
+      val probe2 = Source.fromPublisher(matPub).runWith(TestSink.probe)
+
+      Source.single("hello").runWith(sink)
+
+      probe1.ensureSubscription()
+      probe1.requestNext("hello")
+      probe1.expectComplete()
+
+      probe2.ensureSubscription()
+      probe2.requestNext("hello")
+      probe2.expectComplete()
+    }
+    "materialize the sink and wrap its exposed publisher(not fanout), should fail the second materialization" in {
+      val publisherSink: Sink[String, Publisher[String]] = Sink.asPublisher[String](fanout = false)
+      val (matPub, sink) = publisherSink.preMaterialize()
+
+      val probe1 = Source.fromPublisher(matPub).runWith(TestSink.probe)
+      val probe2 = Source.fromPublisher(matPub).runWith(TestSink.probe)
+
+      Source.single("hello").runWith(sink)
+
+      probe1.ensureSubscription()
+      probe1.requestNext("hello")
+      probe1.expectComplete()
+
+      probe2.ensureSubscription()
+      probe2.expectError().getMessage should include("only supports one subscriber")
+    }
+  }
+
 }

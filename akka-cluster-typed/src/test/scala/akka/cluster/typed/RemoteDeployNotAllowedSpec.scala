@@ -1,15 +1,18 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <http://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.cluster.typed
 
 import akka.actor.typed.ActorSystem
-import akka.actor.typed.TypedAkkaSpecWithShutdown
 import akka.actor.typed.scaladsl.Behaviors
-import akka.testkit.typed.scaladsl.{ ActorTestKit, TestProbe }
+import akka.actor.testkit.typed.scaladsl.TestProbe
 import com.typesafe.config.ConfigFactory
 
 import scala.concurrent.duration._
+import akka.actor.testkit.typed.scaladsl.ActorTestKit
+import akka.actor.testkit.typed.scaladsl.ScalaTestWithActorTestKit
+import org.scalatest.WordSpecLike
 
 object RemoteDeployNotAllowedSpec {
   def config = ConfigFactory.parseString(
@@ -21,8 +24,8 @@ object RemoteDeployNotAllowedSpec {
         warn-about-java-serializer-usage = off
         serialize-creators = off
       }
+      remote.netty.tcp.port = 0
       remote.artery {
-        enabled = on
         canonical {
           hostname = 127.0.0.1
           port = 0
@@ -42,9 +45,7 @@ object RemoteDeployNotAllowedSpec {
     """).withFallback(config)
 }
 
-class RemoteDeployNotAllowedSpec extends ActorTestKit with TypedAkkaSpecWithShutdown {
-
-  override def config = RemoteDeployNotAllowedSpec.config
+class RemoteDeployNotAllowedSpec extends ScalaTestWithActorTestKit(RemoteDeployNotAllowedSpec.config) with WordSpecLike {
 
   "Typed cluster" must {
 
@@ -57,7 +58,7 @@ class RemoteDeployNotAllowedSpec extends ActorTestKit with TypedAkkaSpecWithShut
       case class SpawnChild(name: String) extends GuardianProtocol
       case object SpawnAnonymous extends GuardianProtocol
 
-      val guardianBehavior = Behaviors.immutable[GuardianProtocol] { (ctx, msg) ⇒
+      val guardianBehavior = Behaviors.receive[GuardianProtocol] { (ctx, msg) ⇒
 
         msg match {
           case SpawnChild(name) ⇒

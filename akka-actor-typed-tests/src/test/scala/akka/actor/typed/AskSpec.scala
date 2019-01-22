@@ -1,22 +1,22 @@
-/**
- * Copyright (C) 2017-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2017-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.actor.typed
 
 import akka.actor.typed.internal.adapter.ActorSystemAdapter
 import akka.actor.typed.scaladsl.AskPattern._
 import akka.actor.typed.scaladsl.Behaviors
 import akka.actor.typed.scaladsl.Behaviors._
-import akka.actor.typed.scaladsl.adapter._
 import akka.testkit.EventFilter
-import akka.testkit.typed.scaladsl.{ ActorTestKit, TestProbe }
+import akka.actor.testkit.typed.scaladsl.TestProbe
 import akka.util.Timeout
-import com.typesafe.config.ConfigFactory
-import org.scalatest.concurrent.ScalaFutures
 
 import scala.concurrent.duration._
 import scala.concurrent.{ ExecutionContext, TimeoutException }
 import scala.util.Success
+import akka.actor.testkit.typed.scaladsl.ScalaTestWithActorTestKit
+import org.scalatest.WordSpecLike
 
 object AskSpec {
   sealed trait Msg
@@ -24,17 +24,22 @@ object AskSpec {
   final case class Stop(replyTo: ActorRef[Unit]) extends Msg
 }
 
-class AskSpec extends ActorTestKit
-  with TypedAkkaSpecWithShutdown with ScalaFutures {
-  override def name = "AskSpec"
-  override def config = ConfigFactory.parseString("akka.loggers = [ akka.testkit.TestEventListener ]")
+class AskSpec extends ScalaTestWithActorTestKit("""
+  akka.loglevel=warning
+  akka.loggers = [ akka.testkit.TestEventListener ]
+  """) with WordSpecLike {
 
+  // FIXME eventfilter support in typed testkit
   import AskSpec._
+
+  // FIXME eventfilter support in typed testkit
+  import scaladsl.adapter._
+  implicit val untypedSystem = system.toUntyped
 
   implicit def executor: ExecutionContext =
     system.executionContext
 
-  val behavior: Behavior[Msg] = immutable[Msg] {
+  val behavior: Behavior[Msg] = receive[Msg] {
     case (_, foo: Foo) ⇒
       foo.replyTo ! "foo"
       Behaviors.same
@@ -44,50 +49,58 @@ class AskSpec extends ActorTestKit
   }
 
   "Ask pattern" must {
-    "must fail the future if the actor is already terminated" in {
+    "fail the future if the actor is already terminated" in {
       val ref = spawn(behavior)
       (ref ? Stop).futureValue
-      val probe = TestProbe()
+      val probe = createTestProbe()
       probe.expectTerminated(ref, probe.remainingOrDefault)
-      val answer = ref ? Foo("bar")
+      val answer =
+        EventFilter.warning(pattern = ".*received dead letter.*", occurrences = 1).intercept {
+          ref ? Foo("bar")
+        }
       val result = answer.failed.futureValue
       result shouldBe a[TimeoutException]
       result.getMessage should include("had already been terminated.")
     }
 
-    "must succeed when the actor is alive" in {
+    "succeed when the actor is alive" in {
       val ref = spawn(behavior)
       val response = ref ? Foo("bar")
       response.futureValue should ===("foo")
     }
 
-    "must fail the future if the actor doesn't reply in time" in {
+    "fail the future if the actor doesn't reply in time" in {
       val actor = spawn(Behaviors.empty[Foo])
       implicit val timeout: Timeout = 10.millis
-      val answer = actor ? Foo("bar")
-      val result = answer.failed.futureValue
-      result shouldBe a[TimeoutException]
-      result.getMessage should startWith("Ask timed out on")
+      EventFilter.warning(pattern = ".*unhandled message.*", occurrences = 1).intercept {
+        val answer = actor ? Foo("bar")
+        val result = answer.failed.futureValue
+        result shouldBe a[TimeoutException]
+        result.getMessage should startWith("Ask timed out on")
+      }
     }
 
     /** See issue #19947 (MatchError with adapted ActorRef) */
-    "must fail the future if the actor doesn't exist" in {
+    "fail the future if the actor doesn't exist" in {
       val noSuchActor: ActorRef[Msg] = system match {
         case adaptedSys: ActorSystemAdapter[_] ⇒
           import akka.actor.typed.scaladsl.adapter._
-          adaptedSys.untyped.provider.resolveActorRef("/foo/bar")
+          adaptedSys.untypedSystem.provider.resolveActorRef("/foo/bar")
         case _ ⇒
           fail("this test must only run in an adapted actor system")
       }
 
-      val answer = noSuchActor ? Foo("bar")
+      val answer =
+        EventFilter.warning(pattern = ".*received dead letter.*", occurrences = 1).intercept {
+          noSuchActor ? Foo("bar")
+        }
       val result = answer.failed.futureValue
       result shouldBe a[TimeoutException]
       result.getMessage should include("had already been terminated")
     }
 
-    "must transform a replied akka.actor.Status.Failure to a failed future" in {
-      // It's unlikely but possible that this happens, since the recieving actor would
+    "transform a replied akka.actor.Status.Failure to a failed future" in {
+      // It's unlikely but possible that this happens, since the receiving actor would
       // have to accept a message with an actoref that accepts AnyRef or be doing crazy casting
       // For completeness sake though
       implicit val untypedSystem = akka.actor.ActorSystem("AskSpec-untyped-1")
@@ -118,20 +131,22 @@ class AskSpec extends ActorTestKit
 
       val probe = TestProbe[AnyRef]("probe")
       val behv =
-        Behaviors.immutable[String] {
-          case (ctx, "start-ask") ⇒
-            ctx.ask[Question, Long](probe.ref)(Question(_)) {
+        Behaviors.receive[String] {
+          case (context, "start-ask") ⇒
+            context.ask[Question, Long](probe.ref)(Question(_)) {
               case Success(42L) ⇒
                 throw new RuntimeException("Unsupported number")
               case _ ⇒ "test"
             }
             Behavior.same
-          case (ctx, "test") ⇒
+          case (_, "test") ⇒
             probe.ref ! "got-test"
             Behavior.same
-          case (ctx, "get-state") ⇒
+          case (_, "get-state") ⇒
             probe.ref ! "running"
             Behavior.same
+          case (_, _) ⇒
+            Behavior.unhandled
         }
 
       val ref = spawn(behv)

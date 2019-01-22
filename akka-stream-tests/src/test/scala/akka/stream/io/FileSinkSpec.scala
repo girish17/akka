@@ -1,10 +1,11 @@
-/**
- * Copyright (C) 2015-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2015-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.stream.io
 
 import java.nio.file.StandardOpenOption.{ CREATE, WRITE }
-import java.nio.file.{ Files, Path, StandardOpenOption }
+import java.nio.file._
 
 import akka.actor.ActorSystem
 import akka.dispatch.ExecutionContexts
@@ -14,10 +15,10 @@ import akka.stream.impl.StreamSupervisor.Children
 import akka.stream.scaladsl.{ FileIO, Sink, Source }
 import akka.stream.testkit._
 import akka.stream.testkit.Utils._
+import akka.stream.testkit.scaladsl.StreamTestKit._
 import akka.stream._
-import akka.util.{ ByteString, Timeout }
+import akka.util.ByteString
 import com.google.common.jimfs.{ Configuration, Jimfs }
-import org.scalatest.BeforeAndAfterAll
 
 import scala.collection.mutable.ListBuffer
 import scala.concurrent.{ Await, Future }
@@ -79,7 +80,7 @@ class FileSinkSpec extends StreamSpec(UnboundedMailboxConfig) {
         val completion2 = write(lastWrite)
         val result = Await.result(completion2, 3.seconds)
 
-        result.count should ===(lastWrite.flatten.length)
+        result.count should ===(lastWrite.flatten.length.toLong)
         checkFileContents(f, lastWrite.mkString("") + TestLines.mkString("").drop(100))
       }
     }
@@ -98,7 +99,7 @@ class FileSinkSpec extends StreamSpec(UnboundedMailboxConfig) {
         val completion2 = write(lastWrite)
         val result = Await.result(completion2, 3.seconds)
 
-        result.count should ===(lastWrite.flatten.length)
+        result.count should ===(lastWrite.flatten.length.toLong)
         checkFileContents(f, lastWrite.mkString(""))
       }
     }
@@ -194,9 +195,13 @@ class FileSinkSpec extends StreamSpec(UnboundedMailboxConfig) {
       //LazySink must wait for result of initialization even if got upstreamComplete
       targetFile { f ⇒
         val completion = Source(List(TestByteStrings.head))
-          .runWith(Sink.lazyInit[ByteString, Future[IOResult]](
-            _ ⇒ Future.successful(FileIO.toPath(f)), () ⇒ Future.successful(IOResult.createSuccessful(0)))
-            .mapMaterializedValue(_.flatMap(identity)(ExecutionContexts.sameThreadExecutionContext)))
+          .runWith(Sink.lazyInitAsync(
+            () ⇒ Future.successful(FileIO.toPath(f)))
+            // map a Future[Option[Future[IOResult]]] into a Future[Option[IOResult]]
+            .mapMaterializedValue(_.flatMap {
+              case Some(future) ⇒ future.map(Some(_))(ExecutionContexts.sameThreadExecutionContext)
+              case None         ⇒ Future.successful(None)
+            }(ExecutionContexts.sameThreadExecutionContext)))
 
         Await.result(completion, 3.seconds)
 
@@ -218,9 +223,16 @@ class FileSinkSpec extends StreamSpec(UnboundedMailboxConfig) {
         checkFileContents(f, TestLines.takeWhile(!_.contains('b')).mkString(""))
       }
     }
+
+    "complete with failure when file cannot be open" in {
+      val completion = Source.single(ByteString("42"))
+        .runWith(FileIO.toPath(fs.getPath("/I/hope/this/file/doesnt/exist.txt")))
+
+      completion.failed.futureValue shouldBe an[NoSuchFileException]
+    }
   }
 
-  private def targetFile(block: Path ⇒ Unit, create: Boolean = true) {
+  private def targetFile(block: Path ⇒ Unit, create: Boolean = true): Unit = {
     val targetFile = Files.createTempFile(fs.getPath("/"), "synchronous-file-sink", ".tmp")
     if (!create) Files.delete(targetFile)
     try block(targetFile) finally Files.delete(targetFile)

@@ -1,21 +1,21 @@
 /*
- * Copyright (C) 2017-2018 Lightbend Inc. <http://www.lightbend.com/>
+ * Copyright (C) 2017-2019 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.cluster.typed
 
-import akka.actor.typed.{ ActorRef, Behavior, Props, TypedAkkaSpecWithShutdown }
-import akka.persistence.typed.scaladsl.PersistentBehaviors
-import akka.persistence.typed.scaladsl.PersistentBehaviors.{ CommandHandler, Effect }
-import akka.testkit.typed.scaladsl.{ ActorTestKit, TestProbe }
+import akka.actor.testkit.typed.scaladsl.ScalaTestWithActorTestKit
+import akka.actor.typed.{ ActorRef, Behavior }
+import akka.persistence.typed.scaladsl.{ Effect, EventSourcedBehavior }
+import akka.actor.testkit.typed.scaladsl.TestProbe
+import akka.persistence.typed.PersistenceId
 import com.typesafe.config.ConfigFactory
+import org.scalatest.WordSpecLike
 
 object ClusterSingletonPersistenceSpec {
   val config = ConfigFactory.parseString(
     """
       akka.actor.provider = cluster
-
-      akka.remote.artery.enabled = true
       akka.remote.netty.tcp.port = 0
       akka.remote.artery.canonical.port = 0
       akka.remote.artery.canonical.hostname = 127.0.0.1
@@ -36,25 +36,23 @@ object ClusterSingletonPersistenceSpec {
   private final case object StopPlz extends Command
 
   val persistentActor: Behavior[Command] =
-    PersistentBehaviors.immutable[Command, String, String](
-      persistenceId = "TheSingleton",
-      initialState = "",
-      commandHandler = (_, state, cmd) ⇒ cmd match {
+    EventSourcedBehavior[Command, String, String](
+      persistenceId = PersistenceId("TheSingleton"),
+      emptyState = "",
+      commandHandler = (state, cmd) ⇒ cmd match {
         case Add(s) ⇒ Effect.persist(s)
         case Get(replyTo) ⇒
           replyTo ! state
           Effect.none
-        case StopPlz ⇒ Effect.stop
+        case StopPlz ⇒ Effect.stop()
       },
       eventHandler = (state, evt) ⇒ if (state.isEmpty) evt else state + "|" + evt)
 
 }
 
-class ClusterSingletonPersistenceSpec extends ActorTestKit with TypedAkkaSpecWithShutdown {
+class ClusterSingletonPersistenceSpec extends ScalaTestWithActorTestKit(ClusterSingletonPersistenceSpec.config) with WordSpecLike {
   import ClusterSingletonPersistenceSpec._
   import akka.actor.typed.scaladsl.adapter._
-
-  override def config = ClusterSingletonPersistenceSpec.config
 
   implicit val s = system
 
@@ -66,12 +64,7 @@ class ClusterSingletonPersistenceSpec extends ActorTestKit with TypedAkkaSpecWit
     untypedCluster.join(untypedCluster.selfAddress)
 
     "start persistent actor" in {
-      val ref = ClusterSingleton(system).spawn(
-        behavior = persistentActor,
-        singletonName = "singleton",
-        props = Props.empty,
-        settings = ClusterSingletonSettings(system),
-        terminationMessage = StopPlz)
+      val ref = ClusterSingleton(system).init(SingletonActor(persistentActor, "singleton").withStopMessage(StopPlz))
 
       val p = TestProbe[String]()
 

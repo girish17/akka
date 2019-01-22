@@ -1,5 +1,5 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.cluster
@@ -16,7 +16,7 @@ import akka.dispatch.MonitorableThreadFactory
 import akka.event.{ Logging, LoggingAdapter }
 import akka.japi.Util
 import akka.pattern._
-import akka.remote.{ DefaultFailureDetectorRegistry, _ }
+import akka.remote.{ UniqueAddress ⇒ _, _ }
 import com.typesafe.config.{ Config, ConfigFactory }
 
 import scala.annotation.varargs
@@ -72,7 +72,7 @@ class Cluster(val system: ExtendedActorSystem) extends Extension {
     case c: ClusterActorRefProvider ⇒
       UniqueAddress(c.transport.defaultAddress, AddressUidExtension(system).longAddressUid)
     case other ⇒ throw new ConfigurationException(
-      s"ActorSystem [${system}] needs to have a 'ClusterActorRefProvider' enabled in the configuration, currently uses [${other.getClass.getName}]")
+      s"ActorSystem [${system}] needs to have 'akka.actor.provider' set to 'cluster' in the configuration, currently uses [${other.getClass.getName}]")
   }
 
   /**
@@ -99,7 +99,7 @@ class Cluster(val system: ExtendedActorSystem) extends Extension {
   // ClusterJmx is initialized as the last thing in the constructor
   private var clusterJmx: Option[ClusterJmx] = None
 
-  logInfo("Starting up...")
+  logInfo("Starting up, Akka version [{}] ...", system.settings.ConfigVersion)
 
   val failureDetector: FailureDetectorRegistry[Address] = {
     val createFailureDetector = () ⇒
@@ -168,7 +168,7 @@ class Cluster(val system: ExtendedActorSystem) extends Extension {
 
   // create supervisor for daemons under path "/system/cluster"
   private val clusterDaemons: ActorRef = {
-    system.systemActorOf(Props(classOf[ClusterDaemon], settings, joinConfigCompatChecker).
+    system.systemActorOf(Props(classOf[ClusterDaemon], joinConfigCompatChecker).
       withDispatcher(UseDispatcher).withDeploy(Deploy.local), name = "cluster")
   }
 

@@ -1,10 +1,11 @@
-/**
- * Copyright (C) 2018 Lightbend Inc. <http://www.lightbend.com>
+/*
+ * Copyright (C) 2018-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.stream
 
 import akka.NotUsed
-import akka.actor.{ ActorRef, ActorSystem }
+import akka.actor.ActorRef
 import akka.stream.scaladsl.{ Sink, Source }
 
 import scala.language.implicitConversions
@@ -85,7 +86,7 @@ final case class InvalidSequenceNumberException(expectedSeqNr: Long, gotSeqNr: L
  * of a stream. Each such actor refers to the other side as its "partner". We make sure that no other actor than
  * the initial partner can send demand/messages to the other side accidentally.
  *
- * This exception is thrown when a message is recived from a non-partner actor,
+ * This exception is thrown when a message is received from a non-partner actor,
  * which could mean a bug or some actively malicient behavior from the other side.
  *
  * This is not meant as a security feature, but rather as plain sanity-check.

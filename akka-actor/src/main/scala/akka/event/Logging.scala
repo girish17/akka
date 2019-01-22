@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.event
 
 import java.util.concurrent.TimeoutException
@@ -11,8 +12,7 @@ import akka.actor._
 import akka.annotation.{ DoNotInherit, InternalApi }
 import akka.dispatch.RequiresMessageQueue
 import akka.event.Logging._
-import akka.util.ReentrantGuard
-import akka.util.Helpers
+import akka.util.{ Helpers, ReentrantGuard, unused }
 import akka.{ AkkaException, ConfigurationException }
 
 import scala.annotation.implicitNotFound
@@ -72,7 +72,7 @@ trait LoggingBus extends ActorEventBus {
     _logLevel = level
   }
 
-  private def setUpStdoutLogger(config: Settings) {
+  private def setUpStdoutLogger(config: Settings): Unit = {
     val level = levelFor(config.StdoutLogLevel) getOrElse {
       // only log initialization errors directly with StandardOutLogger.print
       StandardOutLogger.print(Error(new LoggerException, simpleName(this), this.getClass, "unknown akka.stdout-loglevel " + config.StdoutLogLevel))
@@ -88,7 +88,7 @@ trait LoggingBus extends ActorEventBus {
   /**
    * Internal Akka use only
    */
-  private[akka] def startStdoutLogger(config: Settings) {
+  private[akka] def startStdoutLogger(config: Settings): Unit = {
     setUpStdoutLogger(config)
     publish(Debug(simpleName(this), this.getClass, "StandardOutLogger started"))
   }
@@ -96,7 +96,7 @@ trait LoggingBus extends ActorEventBus {
   /**
    * Internal Akka use only
    */
-  private[akka] def startDefaultLoggers(system: ActorSystemImpl) {
+  private[akka] def startDefaultLoggers(system: ActorSystemImpl): Unit = {
     val logName = simpleName(this) + "(" + system + ")"
     val level = levelFor(system.settings.LogLevel) getOrElse {
       // only log initialization errors directly with StandardOutLogger.print
@@ -151,11 +151,11 @@ trait LoggingBus extends ActorEventBus {
   /**
    * Internal Akka use only
    */
-  private[akka] def stopDefaultLoggers(system: ActorSystem) {
+  private[akka] def stopDefaultLoggers(system: ActorSystem): Unit = {
     val level = _logLevel // volatile access before reading loggers
     if (!(loggers contains StandardOutLogger)) {
       setUpStdoutLogger(system.settings)
-      publish(Debug(simpleName(this), this.getClass, "shutting down: StandardOutLogger started"))
+      publish(Debug(simpleName(this), this.getClass, "shutting down: StandardOutLogger"))
     }
     for {
       logger ← loggers
@@ -237,7 +237,7 @@ trait LoggingBus extends ActorEventBus {
  */
 @implicitNotFound("Cannot find LogSource for ${T} please see ScalaDoc for LogSource for how to obtain or construct one.") trait LogSource[-T] {
   def genString(t: T): String
-  def genString(t: T, system: ActorSystem): String = genString(t)
+  def genString(t: T, @unused system: ActorSystem): String = genString(t)
   def getClazz(t: T): Class[_] = t.getClass
 }
 
@@ -417,7 +417,7 @@ object Logging {
   /**
    * INTERNAL API
    */
-  private[akka] class LogExt(system: ExtendedActorSystem) extends Extension {
+  private[akka] class LogExt(@unused system: ExtendedActorSystem) extends Extension {
     private val loggerId = new AtomicInteger
     def id() = loggerId.incrementAndGet()
   }
@@ -444,12 +444,13 @@ object Logging {
   final val DebugLevel = LogLevel(4)
 
   /**
-   * Internal Akka use only
+   * INTERNAL API: Internal Akka use only
    *
    * Don't include the OffLevel in the AllLogLevels since we should never subscribe
    * to some kind of OffEvent.
    */
-  private final val OffLevel = LogLevel(Int.MinValue)
+  @InternalApi
+  private[akka] final val OffLevel = LogLevel(Int.MinValue)
 
   /**
    * Returns the LogLevel associated with the given string,
@@ -462,7 +463,7 @@ object Logging {
     case "warning" ⇒ Some(WarningLevel)
     case "info"    ⇒ Some(InfoLevel)
     case "debug"   ⇒ Some(DebugLevel)
-    case unknown   ⇒ None
+    case _         ⇒ None
   }
 
   /**
@@ -485,6 +486,7 @@ object Logging {
     case WarningLevel ⇒ classOf[Warning]
     case InfoLevel    ⇒ classOf[Info]
     case DebugLevel   ⇒ classOf[Debug]
+    case level        ⇒ throw new IllegalArgumentException(s"Unsupported log level [$level]")
   }
 
   // these type ascriptions/casts are necessary to avoid CCEs during construction while retaining correct type
@@ -721,6 +723,7 @@ object Logging {
       case WarningLevel ⇒ Warning(logSource, logClass, message)
       case InfoLevel    ⇒ Info(logSource, logClass, message)
       case DebugLevel   ⇒ Debug(logSource, logClass, message)
+      case level        ⇒ throw new IllegalArgumentException(s"Unsupported log level [$level]")
     }
 
     def apply(level: LogLevel, logSource: String, logClass: Class[_], message: Any, mdc: MDC): LogEvent = level match {
@@ -728,6 +731,7 @@ object Logging {
       case WarningLevel ⇒ Warning(logSource, logClass, message, mdc)
       case InfoLevel    ⇒ Info(logSource, logClass, message, mdc)
       case DebugLevel   ⇒ Debug(logSource, logClass, message, mdc)
+      case level        ⇒ throw new IllegalArgumentException(s"Unsupported log level [$level]")
     }
 
     def apply(level: LogLevel, logSource: String, logClass: Class[_], message: Any, mdc: MDC, marker: LogMarker): LogEvent = level match {
@@ -735,6 +739,7 @@ object Logging {
       case WarningLevel ⇒ Warning(logSource, logClass, message, mdc, marker)
       case InfoLevel    ⇒ Info(logSource, logClass, message, mdc, marker)
       case DebugLevel   ⇒ Debug(logSource, logClass, message, mdc, marker)
+      case level        ⇒ throw new IllegalArgumentException(s"Unsupported log level [$level]")
     }
 
   }
@@ -828,6 +833,7 @@ object Logging {
 
   /** INTERNAL API, Marker interface for LogEvents containing Markers, which can be set for example on an slf4j logger */
   sealed trait LogEventWithMarker extends LogEvent {
+    /** Marker attribute is nullable due to backward binary compatibility in the class `Warning4` */
     def marker: LogMarker
     /** Appends the marker to the Debug/Info/Warning/Error toString representations */
     override def toString = {
@@ -875,15 +881,6 @@ object Logging {
 
     import StdOutLogger._
 
-    // format: OFF
-    // FIXME: remove those when we have the chance to break binary compatibility
-    private val errorFormat             = ErrorFormat
-    private val errorFormatWithoutCause = ErrorFormatWithoutCause
-    private val warningFormat           = WarningFormat
-    private val infoFormat              = InfoFormat
-    private val debugFormat             = DebugFormat
-    // format: ON
-
     def timestamp(event: LogEvent): String = Helpers.timestamp(event.timestamp)
 
     def print(event: Any): Unit = event match {
@@ -902,6 +899,7 @@ object Logging {
           timestamp(event),
           event.thread.getName,
           event.logSource,
+          formatMDC(event.mdc),
           event.message,
           stackTraceFor(event.cause)))
       case _ ⇒
@@ -910,6 +908,7 @@ object Logging {
           timestamp(event),
           event.thread.getName,
           event.logSource,
+          formatMDC(event.mdc),
           event.message,
           stackTraceFor(event.cause)))
     }
@@ -921,12 +920,14 @@ object Logging {
           timestamp(event),
           event.thread.getName,
           event.logSource,
+          formatMDC(event.mdc),
           event.message))
       case _ ⇒
         println(WarningFormat.format(
           timestamp(event),
           event.thread.getName,
           event.logSource,
+          formatMDC(event.mdc),
           event.message))
     }
 
@@ -937,12 +938,14 @@ object Logging {
           timestamp(event),
           event.thread.getName,
           event.logSource,
+          formatMDC(event.mdc),
           event.message))
       case _ ⇒
         println(InfoFormat.format(
           timestamp(event),
           event.thread.getName,
           event.logSource,
+          formatMDC(event.mdc),
           event.message))
     }
 
@@ -953,31 +956,40 @@ object Logging {
           timestamp(event),
           event.thread.getName,
           event.logSource,
+          formatMDC(event.mdc),
           event.message))
       case _ ⇒
         println(DebugFormat.format(
           timestamp(event),
           event.thread.getName,
           event.logSource,
+          formatMDC(event.mdc),
           event.message))
+    }
+
+    private def formatMDC(mdc: Map[String, Any]): String = {
+      val size = mdc.size
+      if (size == 0) ""
+      else if (size == 1) s"[${mdc.head._1}:${mdc.head._2}]"
+      else mdc.map({ case (k, v) ⇒ s"$k:$v" }).mkString("[", "][", "]")
     }
   }
   object StdOutLogger {
     // format: OFF
-    private final  val ErrorFormat          = "[ERROR] [%s] [%s] [%s] %s%s"
-    private final val ErrorFormatWithMarker = "[ERROR] [%s][%s] [%s] [%s] %s%s"
+    private final  val ErrorFormat          = "[ERROR] [%s] [%s] [%s]%s %s%s"
+    private final val ErrorFormatWithMarker = "[ERROR] [%s][%s] [%s] [%s]%s %s%s"
 
-    private final val ErrorFormatWithoutCause           = "[ERROR] [%s] [%s] [%s] %s"
-    private final val ErrorWithoutCauseWithMarkerFormat = "[ERROR] [%s][%s] [%s] [%s] %s"
+    private final val ErrorFormatWithoutCause           = "[ERROR] [%s] [%s] [%s]%s %s"
+    private final val ErrorWithoutCauseWithMarkerFormat = "[ERROR] [%s][%s] [%s] [%s]%s %s"
 
-    private final val WarningFormat           = "[WARN] [%s] [%s] [%s] %s"
-    private final val WarningWithMarkerFormat = "[WARN] [%s][%s] [%s] [%s] %s"
+    private final val WarningFormat           = "[WARN] [%s] [%s] [%s]%s %s"
+    private final val WarningWithMarkerFormat = "[WARN] [%s][%s] [%s] [%s]%s %s"
 
-    private final val InfoFormat           = "[INFO] [%s] [%s] [%s] %s"
-    private final val InfoWithMarkerFormat = "[INFO] [%s][%s] [%s] [%s] %s"
+    private final val InfoFormat           = "[INFO] [%s] [%s] [%s]%s %s"
+    private final val InfoWithMarkerFormat = "[INFO] [%s][%s] [%s] [%s]%s %s"
 
-    private final val DebugFormat           = "[DEBUG] [%s] [%s] [%s] %s"
-    private final val DebugWithMarkerFormat = "[DEBUG] [%s][%s] [%s] [%s] %s"
+    private final val DebugFormat           = "[DEBUG] [%s] [%s] [%s]%s %s"
+    private final val DebugWithMarkerFormat = "[DEBUG] [%s][%s] [%s] [%s]%s %s"
 
     // format: ON
   }
@@ -1186,7 +1198,7 @@ trait LoggingAdapter {
    * Log message at info level.
    * @see [[LoggingAdapter]]
    */
-  def info(message: String) { if (isInfoEnabled) notifyInfo(message) }
+  def info(message: String): Unit = { if (isInfoEnabled) notifyInfo(message) }
   /**
    * Message template with 1 replacement argument.
    *
@@ -1215,7 +1227,7 @@ trait LoggingAdapter {
    * Log message at debug level.
    * @see [[LoggingAdapter]]
    */
-  def debug(message: String) { if (isDebugEnabled) notifyDebug(message) }
+  def debug(message: String): Unit = { if (isDebugEnabled) notifyDebug(message) }
   /**
    * Message template with 1 replacement argument.
    *
@@ -1243,7 +1255,7 @@ trait LoggingAdapter {
   /**
    * Log message at the specified log level.
    */
-  def log(level: Logging.LogLevel, message: String) { if (isEnabled(level)) notifyLog(level, message) }
+  def log(level: Logging.LogLevel, message: String): Unit = { if (isEnabled(level)) notifyLog(level, message) }
   /**
    * Message template with 1 replacement argument.
    *
@@ -1272,6 +1284,7 @@ trait LoggingAdapter {
     case Logging.WarningLevel ⇒ isWarningEnabled
     case Logging.InfoLevel    ⇒ isInfoEnabled
     case Logging.DebugLevel   ⇒ isDebugEnabled
+    case _                    ⇒ false
   }
 
   final def notifyLog(level: Logging.LogLevel, message: String): Unit = level match {
@@ -1279,6 +1292,7 @@ trait LoggingAdapter {
     case Logging.WarningLevel ⇒ if (isWarningEnabled) notifyWarning(message)
     case Logging.InfoLevel    ⇒ if (isInfoEnabled) notifyInfo(message)
     case Logging.DebugLevel   ⇒ if (isDebugEnabled) notifyDebug(message)
+    case level                ⇒ throw new IllegalArgumentException(s"Unsupported log level [$level]")
   }
 
   /**
@@ -1424,6 +1438,8 @@ object LogMarker {
   /** Java API */
   def create(name: String): LogMarker = apply(name)
 
+  @Deprecated
+  @deprecated("use akka.event.LogEventWithMarker#marker instead", since = "2.5.12")
   def extractFromMDC(mdc: MDC): Option[String] =
     mdc.get(MDCKey) match {
       case Some(v) ⇒ Some(v.toString)
@@ -1436,7 +1452,6 @@ object LogMarker {
 
 /**
  * [[LoggingAdapter]] extension which adds Marker support.
- * Only recommended to be used within Actors as it isn't thread safe.
  */
 class MarkerLoggingAdapter(
   override val bus:       LoggingBus,

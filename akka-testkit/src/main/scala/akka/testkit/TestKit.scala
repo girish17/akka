@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.testkit
 
 import language.postfixOps
@@ -13,7 +14,7 @@ import java.util.concurrent._
 import java.util.concurrent.atomic.AtomicInteger
 
 import akka.actor._
-import akka.util.{ BoxedType, OptionVal, Timeout }
+import akka.util.{ BoxedType, Timeout }
 
 import scala.util.control.NonFatal
 import scala.Some
@@ -61,7 +62,7 @@ object TestActor {
     override def sender: ActorRef = throw IllegalActorStateException("last receive did not dequeue a message")
   }
 
-  val FALSE = (x: Any) ⇒ false
+  val FALSE = (_: Any) ⇒ false
 
   /** INTERNAL API */
   private[TestActor] class DelegatingSupervisorStrategy extends SupervisorStrategy {
@@ -186,12 +187,12 @@ trait TestKitBase {
    * Ignore all messages in the test actor for which the given partial
    * function returns true.
    */
-  def ignoreMsg(f: PartialFunction[Any, Boolean]) { testActor ! TestActor.SetIgnore(Some(f)) }
+  def ignoreMsg(f: PartialFunction[Any, Boolean]): Unit = { testActor ! TestActor.SetIgnore(Some(f)) }
 
   /**
    * Stop ignoring messages in the test actor.
    */
-  def ignoreNoMsg() { testActor ! TestActor.SetIgnore(None) }
+  def ignoreNoMsg(): Unit = { testActor ! TestActor.SetIgnore(None) }
 
   /**
    * Have the testActor watch someone (i.e. `context.watch(...)`).
@@ -269,12 +270,12 @@ trait TestKitBase {
    * Note that the timeout is scaled using Duration.dilated,
    * which uses the configuration entry "akka.test.timefactor".
    */
-  def awaitCond(p: ⇒ Boolean, max: Duration = Duration.Undefined, interval: Duration = 100.millis, message: String = "") {
+  def awaitCond(p: ⇒ Boolean, max: Duration = Duration.Undefined, interval: Duration = 100.millis, message: String = ""): Unit = {
     val _max = remainingOrDilated(max)
     val stop = now + _max
 
     @tailrec
-    def poll(t: Duration) {
+    def poll(t: Duration): Unit = {
       if (!p) {
         assert(now < stop, s"timeout ${_max} expired: $message")
         Thread.sleep(t.toMillis)
@@ -641,14 +642,14 @@ trait TestKitBase {
    * Same as `expectNoMsg(remainingOrDefault)`, but correctly treating the timeFactor.
    */
   @deprecated(message = "Use expectNoMessage instead", since = "2.5.5")
-  def expectNoMsg() { expectNoMsg_internal(remainingOrDefault) }
+  def expectNoMsg(): Unit = { expectNoMsg_internal(remainingOrDefault) }
 
   /**
    * Assert that no message is received for the specified time.
    * NOTE! Supplied value is always dilated.
    */
   @deprecated(message = "Use expectNoMessage instead", since = "2.5.5")
-  def expectNoMsg(max: FiniteDuration) {
+  def expectNoMsg(max: FiniteDuration): Unit = {
     expectNoMsg_internal(max.dilated)
   }
 
@@ -663,9 +664,9 @@ trait TestKitBase {
   /**
    * Same as `expectNoMessage(remainingOrDefault)`, but correctly treating the timeFactor.
    */
-  def expectNoMessage() { expectNoMsg_internal(remainingOrDefault) }
+  def expectNoMessage(): Unit = { expectNoMsg_internal(remainingOrDefault) }
 
-  private def expectNoMsg_internal(max: FiniteDuration) {
+  private def expectNoMsg_internal(max: FiniteDuration): Unit = {
     val finish = System.nanoTime() + max.toNanos
     val pollInterval = 100.millis
 
@@ -733,7 +734,7 @@ trait TestKitBase {
           case RealMessage(o, _) if (f isDefinedAt o) ⇒
             msg = lastMessage
             doit(f(o) :: acc, count + 1)
-          case RealMessage(o, _) ⇒
+          case RealMessage(_, _) ⇒
             queue.offerFirst(lastMessage)
             lastMessage = msg
             acc.reverse
@@ -802,7 +803,7 @@ trait TestKitBase {
   def shutdown(
     actorSystem:          ActorSystem = system,
     duration:             Duration    = 10.seconds.dilated.min(10.seconds),
-    verifySystemShutdown: Boolean     = false) {
+    verifySystemShutdown: Boolean     = false): Unit = {
     TestKit.shutdownActorSystem(actorSystem, duration, verifySystemShutdown)
   }
 

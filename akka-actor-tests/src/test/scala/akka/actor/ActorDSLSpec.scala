@@ -1,5 +1,5 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.actor
@@ -16,7 +16,6 @@ import akka.testkit.TimingTest
 
 class ActorDSLDummy {
   //#import
-  import akka.actor.ActorDSL._
   import akka.actor.ActorSystem
 
   implicit val system = ActorSystem("demo")
@@ -35,6 +34,8 @@ class ActorDSLSpec extends AkkaSpec {
 
     "function as implicit sender" in {
       //#inbox
+      import akka.actor.ActorDSL._
+
       implicit val i = inbox()
       echo ! "hello"
       i.receive() should ===("hello")

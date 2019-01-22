@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.cluster
 
 import scala.collection.immutable
@@ -12,13 +13,12 @@ import akka.actor.Address
 import akka.actor.Deploy
 import akka.actor.Props
 import akka.actor.RootActorPath
-import akka.cluster.ClusterEvent._
 import akka.cluster.MemberStatus._
-import akka.remote.AddressUidExtension
 import akka.remote.testkit.MultiNodeConfig
 import akka.remote.testkit.MultiNodeSpec
 import akka.testkit._
 import com.typesafe.config.ConfigFactory
+import akka.util.ccompat.imm._
 
 object RestartNode2SpecMultiJvmSpec extends MultiNodeConfig {
   val seed1 = role("seed1")
@@ -93,14 +93,14 @@ abstract class RestartNode2SpecSpec
           expectMsg(5.seconds, "ok")
         }
       }
-      enterBarrier("seed1-address-transfered")
+      enterBarrier("seed1-address-transferred")
 
       // now we can join seed1System, seed2 together
 
       runOn(seed1) {
         Cluster(seed1System).joinSeedNodes(seedNodes)
         awaitAssert(Cluster(seed1System).readView.members.size should be(2))
-        awaitAssert(Cluster(seed1System).readView.members.map(_.status) should be(Set(Up)))
+        awaitAssert(Cluster(seed1System).readView.members.unsorted.map(_.status) should be(Set(Up)))
       }
       runOn(seed2) {
         cluster.joinSeedNodes(seedNodes)
@@ -119,7 +119,7 @@ abstract class RestartNode2SpecSpec
         Cluster(restartedSeed1System).joinSeedNodes(seedNodes)
         within(30.seconds) {
           awaitAssert(Cluster(restartedSeed1System).readView.members.size should be(2))
-          awaitAssert(Cluster(restartedSeed1System).readView.members.map(_.status) should be(Set(Up)))
+          awaitAssert(Cluster(restartedSeed1System).readView.members.unsorted.map(_.status) should be(Set(Up)))
         }
       }
       runOn(seed2) {

@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.cluster.client
 
 import language.postfixOps
@@ -16,7 +17,6 @@ import akka.remote.testkit.MultiNodeSpec
 import akka.remote.testkit.STMultiNodeSpec
 import akka.testkit._
 import akka.cluster.pubsub._
-import akka.remote.RARP
 import akka.remote.transport.ThrottlerTransportAdapter.Direction
 import akka.util.Timeout
 
@@ -216,7 +216,6 @@ class ClusterClientSpec extends MultiNodeSpec(ClusterClientSpec) with STMultiNod
     "work with ask" in within(10 seconds) {
       runOn(client) {
         import akka.pattern.ask
-        import system.dispatcher
         val c = system.actorOf(ClusterClient.props(
           ClusterClientSettings(system).withInitialContacts(initialContacts)), "ask-client")
         implicit val timeout = Timeout(remaining)

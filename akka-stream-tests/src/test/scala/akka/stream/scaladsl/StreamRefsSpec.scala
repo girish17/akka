@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2014-2017 Lightbend Inc. <http://www.lightbend.com>
+/*
+ * Copyright (C) 2014-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.stream.scaladsl
 
 import akka.NotUsed
@@ -9,14 +10,14 @@ import akka.actor.{ Actor, ActorIdentity, ActorLogging, ActorRef, ActorSystem, A
 import akka.pattern._
 import akka.stream.testkit.TestPublisher
 import akka.stream.testkit.scaladsl._
-import akka.stream.{ ActorMaterializer, SinkRef, SourceRef, StreamRefAttributes }
-import akka.testkit.{ AkkaSpec, ImplicitSender, SocketUtil, TestKit, TestProbe }
-import akka.util.{ ByteString, PrettyDuration }
+import akka.stream._
+import akka.testkit.{ AkkaSpec, ImplicitSender, TestKit, TestProbe }
+import akka.util.ByteString
 import com.typesafe.config._
 
 import scala.collection.immutable
 import scala.concurrent.duration._
-import scala.concurrent.Future
+import scala.concurrent.{ Await, Future }
 import scala.util.control.NoStackTrace
 
 object StreamRefsSpec {
@@ -68,7 +69,6 @@ object StreamRefsSpec {
           .run()
 
         ref pipeTo sender()
-
       //      case "send-bulk" ⇒
       //        /*
       //         * Here we're able to send a source to a remote recipient
@@ -89,6 +89,14 @@ object StreamRefsSpec {
         val sink =
           StreamRefs.sinkRef[String]()
             .to(Sink.actorRef(probe, "<COMPLETE>"))
+            .run()
+
+        sink pipeTo sender()
+
+      case "receive-ignore" ⇒
+        val sink =
+          StreamRefs.sinkRef[String]()
+            .to(Sink.ignore)
             .run()
 
         sink pipeTo sender()
@@ -147,7 +155,6 @@ object StreamRefsSpec {
   final case class BulkSinkMsg(dataSink: SinkRef[ByteString])
 
   def config(): Config = {
-    val address = SocketUtil.temporaryServerAddress()
     ConfigFactory.parseString(
       s"""
     akka {
@@ -156,11 +163,12 @@ object StreamRefsSpec {
       actor {
         provider = remote
         serialize-messages = off
-      }
 
-      remote.netty.tcp {
-        port = ${address.getPort}
-        hostname = "${address.getHostName}"
+        default-mailbox.mailbox-type = "akka.dispatch.UnboundedMailbox"
+      }
+      remote {
+        artery.canonical.port = 0
+        netty.tcp.port = 0
       }
     }
   """).withFallback(ConfigFactory.load())
@@ -271,7 +279,32 @@ class StreamRefsSpec(config: Config) extends AkkaSpec(config) with ImplicitSende
       // the local "remote sink" should cancel, since it should notice the origin target actor is dead
       probe.ensureSubscription()
       val ex = probe.expectError()
-      ex.getMessage should include("has terminated! Tearing down this side of the stream as well.")
+      ex.getMessage should include("has terminated unexpectedly ")
+    }
+
+    // bug #24626
+    "not receive subscription timeout when got subscribed" in {
+      remoteActor ! "give-subscribe-timeout"
+      val remoteSource: SourceRef[String] = expectMsgType[SourceRef[String]]
+      // materialize directly and start consuming, timeout is 500ms
+      val eventualStrings: Future[immutable.Seq[String]] = remoteSource.throttle(1, 100.millis, 1, ThrottleMode.Shaping)
+        .take(60) // 60 * 100 millis - data flowing for 6 seconds - both 500ms and 5s timeouts should have passed
+        .runWith(Sink.seq)
+
+      Await.result(eventualStrings, 8.seconds)
+    }
+
+    // bug #24934
+    "not receive timeout while data is being sent" in {
+      remoteActor ! "give-infinite"
+      val remoteSource: SourceRef[String] = expectMsgType[SourceRef[String]]
+
+      val done =
+        remoteSource.throttle(1, 200.millis)
+          .takeWithin(5.seconds) // which is > than the subscription timeout (so we make sure the timeout was cancelled)
+          .runWith(Sink.ignore)
+
+      Await.result(done, 8.seconds)
     }
   }
 
@@ -336,6 +369,37 @@ class StreamRefsSpec(config: Config) extends AkkaSpec(config) with ImplicitSende
 
       // the local "remote sink" should cancel, since it should notice the origin target actor is dead
       probe.expectCancellation()
+    }
+
+    // bug #24626
+    "not receive timeout if subscribing is already done to the sink ref" in {
+      remoteActor ! "receive-subscribe-timeout"
+      val remoteSink: SinkRef[String] = expectMsgType[SinkRef[String]]
+      Source.repeat("whatever")
+        .throttle(1, 100.millis)
+        .take(10) // the timeout is 500ms, so this makes sure we run more time than that
+        .runWith(remoteSink)
+
+      (0 to 9).foreach { _ ⇒
+        p.expectMsg("whatever")
+      }
+      p.expectMsg("<COMPLETE>")
+    }
+
+    // bug #24934
+    "not receive timeout while data is being sent" in {
+      remoteActor ! "receive-ignore"
+      val remoteSink: SinkRef[String] = expectMsgType[SinkRef[String]]
+
+      val done =
+        Source.repeat("hello-24934")
+          .throttle(1, 300.millis)
+          .takeWithin(5.seconds) // which is > than the subscription timeout (so we make sure the timeout was cancelled)
+          .alsoToMat(Sink.last)(Keep.right)
+          .to(remoteSink)
+          .run()
+
+      Await.result(done, 7.seconds)
     }
 
     "respect back -pressure from (implied by origin Sink)" in {

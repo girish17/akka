@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2014-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2014-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.stream.scaladsl
 
 import scala.collection.immutable
@@ -9,9 +10,8 @@ import java.util.concurrent.ThreadLocalRandom.{ current ⇒ random }
 
 import akka.stream.{ ActorMaterializer, ActorMaterializerSettings, ThrottleMode }
 import akka.stream.testkit._
-import akka.stream.testkit.Utils._
+import akka.stream.testkit.scaladsl.StreamTestKit._
 
-import scala.concurrent.Await
 import akka.testkit.TimingTest
 import akka.util.ConstantFun
 

@@ -1,14 +1,13 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.remote
 
-import scala.concurrent.duration._
 import scala.annotation.tailrec
 import scala.util.control.NonFatal
 import akka.actor.{ Actor, ActorPath, ActorPathExtractor, ActorRef, ActorSystemImpl, AddressTerminated, Deploy, InternalActorRef, Nobody, Props, VirtualPathContainer }
-import akka.event.{ AddressTerminatedTopic, LogMarker, LoggingAdapter, MarkerLoggingAdapter }
+import akka.event.{ AddressTerminatedTopic, LogMarker, MarkerLoggingAdapter }
 import akka.dispatch.sysmsg.{ DeathWatchNotification, SystemMessage, Watch }
 import akka.actor.ActorRefWithCell
 import akka.actor.ActorRefScope
@@ -24,7 +23,6 @@ import java.util.concurrent.ConcurrentHashMap
 
 import scala.collection.immutable
 import akka.dispatch.sysmsg.Unwatch
-import akka.NotUsed
 
 /**
  * INTERNAL API
@@ -214,7 +212,7 @@ private[akka] class RemoteSystemDaemon(
 
   private def doCreateActor(message: DaemonMsg, props: Props, deploy: Deploy, path: String, supervisor: ActorRef) = {
     path match {
-      case ActorPathExtractor(address, elems) if elems.nonEmpty && elems.head == "remote" ⇒
+      case ActorPathExtractor(_, elems) if elems.nonEmpty && elems.head == "remote" ⇒
         // TODO RK currently the extracted “address” is just ignored, is that okay?
         // TODO RK canonicalize path so as not to duplicate it always #1446
         val subpath = elems.drop(1)

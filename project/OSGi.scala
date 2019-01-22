@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2016-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2016-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka
 
 import com.typesafe.sbt.osgi.OsgiKeys
@@ -15,7 +16,7 @@ object OSGi {
   // in the .../bundles directory which makes testing locally published artifacts
   // a pain. Create bundles but publish them to the normal .../jars directory.
   def osgiSettings = defaultOsgiSettings ++ Seq(
-    packagedArtifact in (Compile, packageBin) := ((artifact in (Compile, packageBin)).value, OsgiKeys.bundle.value),
+    Compile / packageBin := OsgiKeys.bundle.value,
     // This will fail the build instead of accidentally removing classes from the resulting artifact.
     // Each package contained in a project MUST be known to be private or exported, if it's undecided we MUST resolve this
     OsgiKeys.failOnUndecidedPackage := true,
@@ -33,6 +34,8 @@ object OSGi {
     OsgiKeys.importPackage := (osgiOptionalImports map optionalResolution) ++ Seq("!sun.misc", scalaJava8CompatImport(), scalaVersion(scalaImport).value, configImport(), "*"),
     // dynamicImportPackage needed for loading classes defined in configuration
     OsgiKeys.dynamicImportPackage := Seq("*"))
+
+  val actorTyped = exports(Seq("akka.actor.typed.*"))
 
   val agent = exports(Seq("akka.agent.*"))
 
@@ -90,9 +93,16 @@ object OSGi {
     exports(
       packages = Seq(
         "akka.stream.*",
-        "com.typesafe.sslconfig.akka.*"),
-      imports = Seq(scalaJava8CompatImport(), scalaParsingCombinatorImport())) ++
-      Seq(OsgiKeys.requireBundle := Seq(s"""com.typesafe.sslconfig;bundle-version="${Dependencies.sslConfigVersion}""""))
+        "com.typesafe.sslconfig.akka.*"
+      ),
+      imports = Seq(
+        scalaJava8CompatImport(),
+        scalaParsingCombinatorImport(),
+        sslConfigCoreImport("com.typesafe.sslconfig.ssl.*"),
+        sslConfigCoreImport("com.typesafe.sslconfig.util.*"),
+        "!com.typesafe.sslconfig.akka.*"
+      )
+    )
 
   val streamTestkit = exports(Seq("akka.stream.testkit.*"))
 
@@ -100,11 +110,19 @@ object OSGi {
 
   val persistence = exports(
     Seq("akka.persistence.*"),
-    imports = Seq(optionalResolution("org.fusesource.leveldbjni.*"), optionalResolution("org.iq80.leveldb.*")))
+    imports = Seq(
+      optionalResolution("org.fusesource.leveldbjni.*"), 
+      optionalResolution("org.iq80.leveldb.*")
+    )
+  )
+
+  val persistenceTyped = exports(Seq("akka.persistence.typed.*"))
 
   val persistenceQuery = exports(Seq("akka.persistence.query.*"))
 
   val testkit = exports(Seq("akka.testkit.*"))
+
+  val discovery = exports(Seq("akka.discovery.*"))
 
   val osgiOptionalImports = Seq(
     // needed because testkit is normally not used in the application bundle,
@@ -126,7 +144,10 @@ object OSGi {
     versionedImport(packageName, s"$epoch.$major", s"$epoch.${major.toInt + 1}")
   }
   def scalaJava8CompatImport(packageName: String = "scala.compat.java8.*") = versionedImport(packageName, "0.7.0", "1.0.0")
-  def scalaParsingCombinatorImport(packageName: String = "scala.util.parsing.combinator.*") = versionedImport(packageName, "1.0.4", "1.1.0")
+  def scalaParsingCombinatorImport(packageName: String = "scala.util.parsing.combinator.*") = versionedImport(packageName, "1.1.0", "1.2.0")
+  def sslConfigCoreImport(packageName: String = "com.typesafe.sslconfig") = versionedImport(packageName, "0.2.3", "1.0.0")
+  def sslConfigCoreSslImport(packageName: String = "com.typesafe.sslconfig.ssl.*") = versionedImport(packageName, "0.2.3", "1.0.0")
+  def sslConfigCoreUtilImport(packageName: String = "com.typesafe.sslconfig.util.*") = versionedImport(packageName, "0.2.3", "1.0.0")
   def kamonImport(packageName: String = "kamon.sigar.*") = optionalResolution(versionedImport(packageName, "1.6.5", "1.6.6"))
   def sigarImport(packageName: String = "org.hyperic.*") = optionalResolution(versionedImport(packageName, "1.6.5", "1.6.6"))
   def optionalResolution(packageName: String) = "%s;resolution:=optional".format(packageName)

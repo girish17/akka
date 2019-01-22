@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2016-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2016-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.remote.artery
 
 import scala.annotation.tailrec
@@ -15,8 +16,6 @@ import akka.util.HashCode
 private[akka] object ImmutableLongMap {
   def empty[A >: Null](implicit t: ClassTag[A]): ImmutableLongMap[A] =
     new ImmutableLongMap(Array.emptyLongArray, Array.empty)
-
-  private val MaxScanLength = 10
 }
 
 /**
@@ -27,7 +26,6 @@ private[akka] object ImmutableLongMap {
  */
 private[akka] class ImmutableLongMap[A >: Null] private (
   private val keys: Array[Long], private val values: Array[A])(implicit t: ClassTag[A]) {
-  import ImmutableLongMap.MaxScanLength
 
   val size: Int = keys.length
 

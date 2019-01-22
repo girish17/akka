@@ -1,18 +1,20 @@
-/**
- * Copyright (C) 2014-2017 Lightbend Inc. <http://www.lightbend.com>
+/*
+ * Copyright (C) 2014-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package docs.akka.typed
 
 //#imports
 import akka.actor.typed.scaladsl.Behaviors
 import akka.actor.typed.{ ActorSystem, Logger, PostStop }
-import akka.testkit.typed.scaladsl.ActorTestKit
+import org.scalatest.WordSpecLike
 
 import scala.concurrent.Await
 import scala.concurrent.duration._
+
 //#imports
 
-import akka.actor.typed.TypedAkkaSpecWithShutdown
+import akka.actor.testkit.typed.scaladsl.ScalaTestWithActorTestKit
 
 object GracefulStopDocSpec {
 
@@ -26,27 +28,27 @@ object GracefulStopDocSpec {
     // Predefined cleanup operation
     def cleanup(log: Logger): Unit = log.info("Cleaning up!")
 
-    val mcpa = Behaviors.immutable[JobControlLanguage] { (ctx, msg) ⇒
-      msg match {
+    val mcpa = Behaviors.receive[JobControlLanguage] { (context, message) ⇒
+      message match {
         case SpawnJob(jobName) ⇒
-          ctx.log.info("Spawning job {}!", jobName)
-          ctx.spawn(Job.job(jobName), name = jobName)
+          context.log.info("Spawning job {}!", jobName)
+          context.spawn(Job.job(jobName), name = jobName)
           Behaviors.same
         case GracefulShutdown ⇒
-          ctx.log.info("Initiating graceful shutdown...")
+          context.log.info("Initiating graceful shutdown...")
           // perform graceful stop, executing cleanup before final system termination
           // behavior executing cleanup is passed as a parameter to Actor.stopped
           Behaviors.stopped {
-            Behaviors.onSignal {
+            Behaviors.receiveSignal {
               case (context, PostStop) ⇒
                 cleanup(context.system.log)
                 Behaviors.same
             }
           }
       }
-    }.onSignal {
-      case (ctx, PostStop) ⇒
-        ctx.log.info("MCPA stopped")
+    }.receiveSignal {
+      case (context, PostStop) ⇒
+        context.log.info("MCPA stopped")
         Behaviors.same
     }
   }
@@ -57,9 +59,9 @@ object GracefulStopDocSpec {
   object Job {
     import GracefulStopDocSpec.MasterControlProgramActor.JobControlLanguage
 
-    def job(name: String) = Behaviors.onSignal[JobControlLanguage] {
-      case (ctx, PostStop) ⇒
-        ctx.log.info("Worker {} stopped", name)
+    def job(name: String) = Behaviors.receiveSignal[JobControlLanguage] {
+      case (context, PostStop) ⇒
+        context.log.info("Worker {} stopped", name)
         Behaviors.same
     }
   }
@@ -67,7 +69,7 @@ object GracefulStopDocSpec {
 
 }
 
-class GracefulStopDocSpec extends ActorTestKit with TypedAkkaSpecWithShutdown {
+class GracefulStopDocSpec extends ScalaTestWithActorTestKit with WordSpecLike {
 
   import GracefulStopDocSpec._
 

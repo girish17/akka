@@ -1,10 +1,13 @@
-/**
- * Copyright (C) 2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2018-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.actor.typed
 package scaladsl
 
-import akka.testkit.typed.scaladsl.{ ActorTestKit, TestProbe }
+import akka.actor.testkit.typed.scaladsl.ScalaTestWithActorTestKit
+import akka.actor.testkit.typed.scaladsl.TestProbe
+import org.scalatest.WordSpecLike
 
 object StashSpec {
   sealed trait Command
@@ -22,10 +25,10 @@ object StashSpec {
       val buffer = StashBuffer[Command](capacity = 10)
 
       def active(processed: Vector[String]): Behavior[Command] =
-        Behaviors.immutable { (ctx, cmd) ⇒
+        Behaviors.receive { (context, cmd) ⇒
           cmd match {
-            case msg: Msg ⇒
-              active(processed :+ msg.s)
+            case message: Msg ⇒
+              active(processed :+ message.s)
             case GetProcessed(replyTo) ⇒
               replyTo ! processed
               Behaviors.same
@@ -44,10 +47,10 @@ object StashSpec {
         }
 
       def stashing(processed: Vector[String]): Behavior[Command] =
-        Behaviors.immutable { (ctx, cmd) ⇒
+        Behaviors.receive { (context, cmd) ⇒
           cmd match {
-            case msg: Msg ⇒
-              buffer.stash(msg)
+            case message: Msg ⇒
+              buffer.stash(message)
               Behaviors.same
             case g: GetProcessed ⇒
               buffer.stash(g)
@@ -56,16 +59,16 @@ object StashSpec {
               replyTo ! buffer.size
               Behaviors.same
             case UnstashAll ⇒
-              buffer.unstashAll(ctx, active(processed))
+              buffer.unstashAll(context, active(processed))
             case Unstash ⇒
-              ctx.log.debug(s"Unstash ${buffer.size}")
+              context.log.debug(s"Unstash ${buffer.size}")
               if (buffer.isEmpty)
                 active(processed)
               else {
-                ctx.self ! Unstash // continue unstashing until buffer is empty
+                context.self ! Unstash // continue unstashing until buffer is empty
                 val numberOfMessages = 2
-                ctx.log.debug(s"Unstash $numberOfMessages of ${buffer.size}, starting with ${buffer.head}")
-                buffer.unstash(ctx, unstashing(processed), numberOfMessages, Unstashed)
+                context.log.debug(s"Unstash $numberOfMessages of ${buffer.size}, starting with ${buffer.head}")
+                buffer.unstash(context, unstashing(processed), numberOfMessages, Unstashed)
               }
             case Stash ⇒
               Behaviors.unhandled
@@ -75,34 +78,34 @@ object StashSpec {
         }
 
       def unstashing(processed: Vector[String]): Behavior[Command] =
-        Behaviors.immutable { (ctx, cmd) ⇒
+        Behaviors.receive { (context, cmd) ⇒
           cmd match {
-            case Unstashed(msg: Msg) ⇒
-              ctx.log.debug(s"unstashed $msg")
-              unstashing(processed :+ msg.s)
+            case Unstashed(message: Msg) ⇒
+              context.log.debug(s"unstashed $message")
+              unstashing(processed :+ message.s)
             case Unstashed(GetProcessed(replyTo)) ⇒
-              ctx.log.debug(s"unstashed GetProcessed")
+              context.log.debug(s"unstashed GetProcessed")
               replyTo ! processed
               Behaviors.same
-            case msg: Msg ⇒
-              ctx.log.debug(s"got $msg in unstashing")
-              buffer.stash(msg)
+            case message: Msg ⇒
+              context.log.debug(s"got $message in unstashing")
+              buffer.stash(message)
               Behaviors.same
             case g: GetProcessed ⇒
-              ctx.log.debug(s"got GetProcessed in unstashing")
+              context.log.debug(s"got GetProcessed in unstashing")
               buffer.stash(g)
               Behaviors.same
             case Stash ⇒
               stashing(processed)
             case Unstash ⇒
               if (buffer.isEmpty) {
-                ctx.log.debug(s"unstashing done")
+                context.log.debug(s"unstashing done")
                 active(processed)
               } else {
-                ctx.self ! Unstash // continue unstashing until buffer is empty
+                context.self ! Unstash // continue unstashing until buffer is empty
                 val numberOfMessages = 2
-                ctx.log.debug(s"Unstash $numberOfMessages of ${buffer.size}, starting with ${buffer.head}")
-                buffer.unstash(ctx, unstashing(processed), numberOfMessages, Unstashed)
+                context.log.debug(s"Unstash $numberOfMessages of ${buffer.size}, starting with ${buffer.head}")
+                buffer.unstash(context, unstashing(processed), numberOfMessages, Unstashed)
               }
             case GetStashSize(replyTo) ⇒
               replyTo ! buffer.size
@@ -117,7 +120,7 @@ object StashSpec {
       active(Vector.empty)
     }
 
-  class MutableStash(ctx: ActorContext[Command]) extends Behaviors.MutableBehavior[Command] {
+  class MutableStash(context: ActorContext[Command]) extends AbstractBehavior[Command] {
 
     private val buffer = StashBuffer.apply[Command](capacity = 10)
     private var stashing = false
@@ -125,11 +128,11 @@ object StashSpec {
 
     override def onMessage(cmd: Command): Behavior[Command] = {
       cmd match {
-        case msg: Msg ⇒
+        case message: Msg ⇒
           if (stashing)
-            buffer.stash(msg)
+            buffer.stash(message)
           else
-            processed :+= msg.s
+            processed :+= message.s
           this
         case g @ GetProcessed(replyTo) ⇒
           if (stashing)
@@ -145,23 +148,23 @@ object StashSpec {
           this
         case UnstashAll ⇒
           stashing = false
-          buffer.unstashAll(ctx, this)
+          buffer.unstashAll(context, this)
         case Unstash ⇒
           if (buffer.isEmpty) {
             stashing = false
             this
           } else {
-            ctx.self ! Unstash // continue unstashing until buffer is empty
+            context.self ! Unstash // continue unstashing until buffer is empty
             val numberOfMessages = 2
-            ctx.log.debug(s"Unstash $numberOfMessages of ${buffer.size}, starting with ${buffer.head}")
-            buffer.unstash(ctx, this, numberOfMessages, Unstashed)
+            context.log.debug(s"Unstash $numberOfMessages of ${buffer.size}, starting with ${buffer.head}")
+            buffer.unstash(context, this, numberOfMessages, Unstashed)
           }
-        case Unstashed(msg: Msg) ⇒
-          ctx.log.debug(s"unstashed $msg")
-          processed :+= msg.s
+        case Unstashed(message: Msg) ⇒
+          context.log.debug(s"unstashed $message")
+          processed :+= message.s
           this
         case Unstashed(GetProcessed(replyTo)) ⇒
-          ctx.log.debug(s"unstashed GetProcessed")
+          context.log.debug(s"unstashed GetProcessed")
           replyTo ! processed
           Behaviors.same
         case _: Unstashed ⇒
@@ -182,10 +185,10 @@ class ImmutableStashSpec extends StashSpec {
 class MutableStashSpec extends StashSpec {
   import StashSpec._
   def testQualifier: String = "mutable behavior"
-  def behaviorUnderTest: Behavior[Command] = Behaviors.mutable(ctx ⇒ new MutableStash(ctx))
+  def behaviorUnderTest: Behavior[Command] = Behaviors.setup(context ⇒ new MutableStash(context))
 }
 
-abstract class StashSpec extends ActorTestKit with TypedAkkaSpecWithShutdown {
+abstract class StashSpec extends ScalaTestWithActorTestKit with WordSpecLike {
   import StashSpec._
 
   def testQualifier: String

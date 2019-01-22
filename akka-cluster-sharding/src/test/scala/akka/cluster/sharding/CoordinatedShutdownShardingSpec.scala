@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2017-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2017-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.cluster.sharding
 
 import scala.concurrent.Future
@@ -15,11 +16,11 @@ import akka.testkit.AkkaSpec
 import akka.testkit.TestActors.EchoActor
 import akka.testkit.TestProbe
 import akka.testkit.WithLogCapturing
+import akka.util.ccompat.imm._
 
 object CoordinatedShutdownShardingSpec {
   val config =
     """
-    akka.loglevel = DEBUG
     akka.loggers = ["akka.testkit.SilenceAllTestEventListener"]
     akka.actor.provider = "cluster"
     akka.remote.netty.tcp.port = 0
@@ -95,9 +96,9 @@ class CoordinatedShutdownShardingSpec extends AkkaSpec(CoordinatedShutdownShardi
       within(10.seconds) {
         awaitAssert {
           Cluster(sys1).state.members.size should ===(2)
-          Cluster(sys1).state.members.map(_.status) should ===(Set(MemberStatus.Up))
+          Cluster(sys1).state.members.unsorted.map(_.status) should ===(Set(MemberStatus.Up))
           Cluster(sys2).state.members.size should ===(2)
-          Cluster(sys2).state.members.map(_.status) should ===(Set(MemberStatus.Up))
+          Cluster(sys2).state.members.unsorted.map(_.status) should ===(Set(MemberStatus.Up))
         }
       }
 
@@ -105,11 +106,11 @@ class CoordinatedShutdownShardingSpec extends AkkaSpec(CoordinatedShutdownShardi
       within(10.seconds) {
         awaitAssert {
           Cluster(sys1).state.members.size should ===(3)
-          Cluster(sys1).state.members.map(_.status) should ===(Set(MemberStatus.Up))
+          Cluster(sys1).state.members.unsorted.map(_.status) should ===(Set(MemberStatus.Up))
           Cluster(sys2).state.members.size should ===(3)
-          Cluster(sys2).state.members.map(_.status) should ===(Set(MemberStatus.Up))
+          Cluster(sys2).state.members.unsorted.map(_.status) should ===(Set(MemberStatus.Up))
           Cluster(sys3).state.members.size should ===(3)
-          Cluster(sys3).state.members.map(_.status) should ===(Set(MemberStatus.Up))
+          Cluster(sys3).state.members.unsorted.map(_.status) should ===(Set(MemberStatus.Up))
         }
       }
 

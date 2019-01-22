@@ -1,12 +1,12 @@
-/**
- * Copyright (C) 2018 Lightbend Inc. <http://www.lightbend.com>
+/*
+ * Copyright (C) 2018-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.actor.typed.internal
 
 import java.util.function.Consumer
 import java.util.function.{ Function ⇒ JFunction }
 
-import akka.actor.typed.ActorContext
 import akka.actor.typed.Behavior
 import akka.actor.typed.javadsl
 import akka.actor.typed.scaladsl
@@ -86,7 +86,7 @@ import akka.util.ConstantFun
     }
   }
 
-  override def forEach(f: Consumer[T]): Unit = foreach(f.accept)
+  override def forEach(f: Consumer[T]): Unit = foreach(f.accept(_))
 
   override def unstashAll(ctx: scaladsl.ActorContext[T], behavior: Behavior[T]): Behavior[T] =
     unstash(ctx, behavior, size, ConstantFun.scalaIdentityFunction[T])
@@ -94,13 +94,12 @@ import akka.util.ConstantFun
   override def unstashAll(ctx: javadsl.ActorContext[T], behavior: Behavior[T]): Behavior[T] =
     unstashAll(ctx.asScala, behavior)
 
-  override def unstash(scaladslCtx: scaladsl.ActorContext[T], behavior: Behavior[T],
+  override def unstash(ctx: scaladsl.ActorContext[T], behavior: Behavior[T],
                        numberOfMessages: Int, wrap: T ⇒ T): Behavior[T] = {
     val iter = new Iterator[T] {
       override def hasNext: Boolean = StashBufferImpl.this.nonEmpty
-      override def next(): T = StashBufferImpl.this.dropHead()
-    }.take(numberOfMessages).map(wrap)
-    val ctx = scaladslCtx.asInstanceOf[ActorContext[T]]
+      override def next(): T = wrap(StashBufferImpl.this.dropHead())
+    }.take(numberOfMessages)
     Behavior.interpretMessages[T](behavior, ctx, iter)
   }
 
@@ -108,5 +107,7 @@ import akka.util.ConstantFun
                        numberOfMessages: Int, wrap: JFunction[T, T]): Behavior[T] =
     unstash(ctx.asScala, behavior, numberOfMessages, x ⇒ wrap.apply(x))
 
+  override def toString: String =
+    s"StashBuffer($size/$capacity)"
 }
 

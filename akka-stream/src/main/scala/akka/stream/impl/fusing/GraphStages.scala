@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2015-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2015-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.stream.impl.fusing
 
 import java.util.concurrent.atomic.{ AtomicBoolean, AtomicReference }
@@ -19,10 +20,9 @@ import akka.stream.stage._
 import akka.stream.{ Shape, _ }
 
 import scala.annotation.unchecked.uncheckedVariance
-import scala.util.{ Failure, Success, Try }
+import scala.util.Try
 import scala.concurrent.duration.FiniteDuration
 import scala.concurrent.{ Future, Promise }
-import scala.util.control.NonFatal
 
 /**
  * INTERNAL API
@@ -446,12 +446,12 @@ import scala.util.control.NonFatal
   /**
    * INTERNAL API.
    *
-   * Fusing graphs that have cycles involving FanIn stages might lead to deadlocks if
+   * Fusing graphs that have cycles involving FanIn operators might lead to deadlocks if
    * demand is not carefully managed.
    *
-   * This means that FanIn stages need to early pull every relevant input on startup.
-   * This can either be implemented inside the stage itself, or this method can be used,
-   * which adds a detacher stage to every input.
+   * This means that FanIn operators need to early pull every relevant input on startup.
+   * This can either be implemented inside the operator itself, or this method can be used,
+   * which adds a detacher operator to every input.
    */
   @InternalApi private[stream] def withDetachedInputs[T](stage: GraphStage[UniformFanInShape[T, T]]) =
     GraphDSL.create() { implicit builder ⇒

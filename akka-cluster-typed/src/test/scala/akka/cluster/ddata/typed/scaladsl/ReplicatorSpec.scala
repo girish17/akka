@@ -1,48 +1,53 @@
-/**
- * Copyright (C) 2017-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2017-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.cluster.ddata.typed.scaladsl
 
+import org.scalatest.WordSpecLike
+import akka.actor.testkit.typed.TestKitSettings
+import akka.cluster.ddata.SelfUniqueAddress
+
+// #sample
 import akka.actor.Scheduler
-import akka.actor.typed.{ ActorRef, Behavior, TypedAkkaSpecWithShutdown }
+import akka.actor.typed.{ ActorRef, Behavior }
 import akka.actor.typed.scaladsl.AskPattern._
 import akka.actor.typed.scaladsl.Behaviors
-import akka.actor.typed.scaladsl.adapter._
 import akka.cluster.Cluster
 import akka.cluster.ddata.typed.scaladsl.Replicator._
-import akka.cluster.ddata.{ GCounter, GCounterKey, ReplicatedData }
-import akka.testkit.typed.scaladsl._
-import akka.testkit.typed.TestKitSettings
+import akka.cluster.ddata.{ GCounter, GCounterKey }
+import akka.actor.testkit.typed.scaladsl._
 import akka.util.Timeout
 import com.typesafe.config.ConfigFactory
-import org.scalatest.concurrent.Eventually
 
 import scala.concurrent.Future
 import scala.concurrent.duration._
+
+// #sample
 
 object ReplicatorSpec {
 
   val config = ConfigFactory.parseString(
     """
-    akka.loglevel = DEBUG
     akka.actor.provider = "cluster"
     akka.remote.netty.tcp.port = 0
     akka.remote.artery.canonical.port = 0
     akka.remote.artery.canonical.hostname = 127.0.0.1
     """)
 
+  // #sample
   sealed trait ClientCommand
   final case object Increment extends ClientCommand
   final case class GetValue(replyTo: ActorRef[Int]) extends ClientCommand
   final case class GetCachedValue(replyTo: ActorRef[Int]) extends ClientCommand
   private sealed trait InternalMsg extends ClientCommand
-  private case class InternalUpdateResponse[A <: ReplicatedData](rsp: Replicator.UpdateResponse[A]) extends InternalMsg
-  private case class InternalGetResponse[A <: ReplicatedData](rsp: Replicator.GetResponse[A]) extends InternalMsg
-  private case class InternalChanged[A <: ReplicatedData](chg: Replicator.Changed[A]) extends InternalMsg
+  private case class InternalUpdateResponse(rsp: Replicator.UpdateResponse[GCounter]) extends InternalMsg
+  private case class InternalGetResponse(rsp: Replicator.GetResponse[GCounter]) extends InternalMsg
+  private case class InternalChanged(chg: Replicator.Changed[GCounter]) extends InternalMsg
 
   val Key = GCounterKey("counter")
 
-  def client(replicator: ActorRef[Replicator.Command])(implicit cluster: Cluster): Behavior[ClientCommand] =
+  def client(replicator: ActorRef[Replicator.Command])(implicit node: SelfUniqueAddress): Behavior[ClientCommand] =
     Behaviors.setup[ClientCommand] { ctx ⇒
 
       val updateResponseAdapter: ActorRef[Replicator.UpdateResponse[GCounter]] =
@@ -57,10 +62,10 @@ object ReplicatorSpec {
       replicator ! Replicator.Subscribe(Key, changedAdapter)
 
       def behavior(cachedValue: Int): Behavior[ClientCommand] = {
-        Behaviors.immutable[ClientCommand] { (ctx, msg) ⇒
+        Behaviors.receive[ClientCommand] { (ctx, msg) ⇒
           msg match {
             case Increment ⇒
-              replicator ! Replicator.Update(Key, GCounter.empty, Replicator.WriteLocal, updateResponseAdapter)(_ + 1)
+              replicator ! Replicator.Update(Key, GCounter.empty, Replicator.WriteLocal, updateResponseAdapter)(_ :+ 1)
               Behaviors.same
 
             case GetValue(replyTo) ⇒
@@ -92,6 +97,7 @@ object ReplicatorSpec {
 
       behavior(cachedValue = 0)
     }
+  // #sample
 
   object CompileOnlyTest {
     def shouldHaveConvenienceForAsk(): Unit = {
@@ -116,15 +122,13 @@ object ReplicatorSpec {
 
 }
 
-class ReplicatorSpec extends ActorTestKit with TypedAkkaSpecWithShutdown with Eventually {
-
-  override def config = ReplicatorSpec.config
+class ReplicatorSpec extends ScalaTestWithActorTestKit(ReplicatorSpec.config) with WordSpecLike {
 
   import ReplicatorSpec._
 
   implicit val testSettings = TestKitSettings(system)
   val settings = ReplicatorSettings(system)
-  implicit val cluster = Cluster(system.toUntyped)
+  implicit val selfNodeAddress = DistributedData(system).selfUniqueAddress
 
   "Replicator" must {
 
@@ -164,6 +168,10 @@ class ReplicatorSpec extends ActorTestKit with TypedAkkaSpecWithShutdown with Ev
       c ! Increment
       c ! GetValue(probe.ref)
       probe.expectMessage(1)
+    }
+
+    "have the prefixed replicator name" in {
+      ReplicatorSettings.name(system) should ===("typedDdataReplicator")
     }
   }
 }

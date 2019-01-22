@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.dispatch
 
 import language.postfixOps
@@ -91,7 +92,7 @@ abstract class MailboxSpec extends AkkaSpec with BeforeAndAfterAll with BeforeAn
       q.hasMessages should ===(expected != 0)
   }
 
-  def ensureSingleConsumerEnqueueDequeue(config: MailboxType) {
+  def ensureSingleConsumerEnqueueDequeue(config: MailboxType): Unit = {
     val q = factory(config)
     ensureMailboxSize(q, 0)
     q.dequeue should ===(null)
@@ -111,7 +112,7 @@ abstract class MailboxSpec extends AkkaSpec with BeforeAndAfterAll with BeforeAn
     ensureMailboxSize(q, 0)
   }
 
-  def ensureInitialMailboxState(config: MailboxType, q: MessageQueue) {
+  def ensureInitialMailboxState(config: MailboxType, q: MessageQueue): Unit = {
     q should not be null
     q match {
       case aQueue: BlockingQueue[_] ⇒

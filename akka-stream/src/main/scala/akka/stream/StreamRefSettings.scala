@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2018 Lightbend Inc. <http://www.lightbend.com>
+/*
+ * Copyright (C) 2018-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.stream
 
 import java.util.concurrent.TimeUnit
@@ -28,7 +29,8 @@ object StreamRefSettings {
     StreamRefSettingsImpl(
       bufferCapacity = c.getInt("buffer-capacity"),
       demandRedeliveryInterval = c.getDuration("demand-redelivery-interval", TimeUnit.MILLISECONDS).millis,
-      subscriptionTimeout = c.getDuration("subscription-timeout", TimeUnit.MILLISECONDS).millis
+      subscriptionTimeout = c.getDuration("subscription-timeout", TimeUnit.MILLISECONDS).millis,
+      finalTerminationSignalDeadline = c.getDuration("final-termination-signal-deadline", TimeUnit.MILLISECONDS).millis
     )
   }
 }
@@ -42,11 +44,13 @@ trait StreamRefSettings {
   def bufferCapacity: Int
   def demandRedeliveryInterval: FiniteDuration
   def subscriptionTimeout: FiniteDuration
+  def finalTerminationSignalDeadline: FiniteDuration
 
   // --- with... methods ---
 
   def withBufferCapacity(value: Int): StreamRefSettings
   def withDemandRedeliveryInterval(value: FiniteDuration): StreamRefSettings
   def withSubscriptionTimeout(value: FiniteDuration): StreamRefSettings
+  def withTerminationReceivedBeforeCompletionLeeway(value: FiniteDuration): StreamRefSettings
 }
 

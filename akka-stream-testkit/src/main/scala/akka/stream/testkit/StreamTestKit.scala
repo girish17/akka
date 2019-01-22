@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2014-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2014-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.stream.testkit
 
 import akka.actor.{ ActorRef, ActorSystem, DeadLetterSuppression, NoSerializationVerificationNeeded }
@@ -12,12 +13,13 @@ import org.reactivestreams.{ Publisher, Subscriber, Subscription }
 import scala.annotation.tailrec
 import scala.collection.immutable
 import scala.concurrent.duration._
-import scala.language.existentials
 import java.io.StringWriter
 import java.io.PrintWriter
 import java.util.concurrent.CountDownLatch
 
-import akka.testkit.TestActor.{ AutoPilot, NoAutoPilot }
+import akka.testkit.TestActor.AutoPilot
+import akka.util.JavaDurationConverters
+import akka.util.ccompat._
 
 /**
  * Provides factory methods for various Publishers.
@@ -139,6 +141,14 @@ object TestPublisher {
     @deprecated(message = "Use expectNoMessage instead", since = "2.5.5")
     def expectNoMsg(max: FiniteDuration): Self = executeAfterSubscription {
       probe.expectNoMsg(max)
+      self
+    }
+
+    /**
+     * Expect no messages.
+     */
+    def expectNoMessage(): Self = executeAfterSubscription {
+      probe.expectNoMessage()
       self
     }
 
@@ -354,7 +364,7 @@ object TestSubscriber {
      * Expect multiple stream elements.
      */
     @annotation.varargs def expectNext(e1: I, e2: I, es: I*): Self =
-      expectNextN((e1 +: e2 +: es).map(identity)(collection.breakOut))
+      expectNextN((e1 +: e2 +: es).iterator.map(identity).to(immutable.IndexedSeq))
 
     /**
      * Fluent DSL
@@ -362,7 +372,7 @@ object TestSubscriber {
      * Expect multiple stream elements in arbitrary order.
      */
     @annotation.varargs def expectNextUnordered(e1: I, e2: I, es: I*): Self =
-      expectNextUnorderedN((e1 +: e2 +: es).map(identity)(collection.breakOut))
+      expectNextUnorderedN((e1 +: e2 +: es).iterator.map(identity).to(immutable.IndexedSeq))
 
     /**
      * Expect and return the next `n` stream elements.
@@ -431,7 +441,7 @@ object TestSubscriber {
     }
 
     /**
-     * Expect subscription to be followed immediatly by an error signal.
+     * Expect subscription to be followed immediately by an error signal.
      *
      * By default `1` demand will be signalled in order to wake up a possibly lazy upstream.
      *
@@ -442,9 +452,9 @@ object TestSubscriber {
     }
 
     /**
-     * Expect subscription to be followed immediatly by an error signal.
+     * Expect subscription to be followed immediately by an error signal.
      *
-     * Depending on the `signalDemand` parameter demand may be signalled immediatly after obtaining the subscription
+     * Depending on the `signalDemand` parameter demand may be signalled immediately after obtaining the subscription
      * in order to wake up a possibly lazy upstream. You can disable this by setting the `signalDemand` parameter to `false`.
      *
      * See also [[#expectSubscriptionAndError()]].
@@ -498,7 +508,7 @@ object TestSubscriber {
      *
      * Expect subscription followed by immediate stream completion.
      *
-     * Depending on the `signalDemand` parameter demand may be signalled immediatly after obtaining the subscription
+     * Depending on the `signalDemand` parameter demand may be signalled immediately after obtaining the subscription
      * in order to wake up a possibly lazy upstream. You can disable this by setting the `signalDemand` parameter to `false`.
      *
      * See also [[#expectSubscriptionAndComplete]].
@@ -596,6 +606,15 @@ object TestSubscriber {
      */
     def expectNoMessage(remaining: FiniteDuration): Self = {
       probe.expectNoMessage(remaining)
+      self
+    }
+
+    /**
+     * Java API: Assert that no message is received for the specified time.
+     */
+    def expectNoMessage(remaining: java.time.Duration): Self = {
+      import JavaDurationConverters._
+      probe.expectNoMessage(remaining.asScala)
       self
     }
 

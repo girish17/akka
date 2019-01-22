@@ -1,19 +1,22 @@
-/**
- * Copyright (C) 2014-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2014-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.stream.scaladsl
 
-import akka.{ NotUsed, pattern }
+import akka.pattern
 import akka.stream.{ ActorAttributes, ActorMaterializer, Supervision }
 import akka.stream.impl.ReactiveStreamsCompliance
 import akka.stream.testkit.TestSubscriber.Probe
 import akka.stream.testkit.Utils.TE
 import akka.stream.testkit._
 import akka.stream.testkit.scaladsl._
+import akka.stream.{ ActorAttributes, ActorMaterializer, Supervision }
 
 import scala.collection.immutable
-import scala.concurrent.Future
+import scala.concurrent.{ Future, Promise }
 import scala.concurrent.duration._
+import scala.util.Failure
 
 class FlowScanAsyncSpec extends StreamSpec {
 
@@ -43,6 +46,21 @@ class FlowScanAsyncSpec extends StreamSpec {
 
       sub.request(10)
       sub.expectNext(0)
+      pub.sendComplete()
+      sub.expectComplete()
+    }
+
+    "complete after stream has been consumed and pending futures resolved" in {
+      val (pub, sub) =
+        TestSource.probe[Int]
+          .via(Flow[Int].scanAsync(0)((acc, in) ⇒ Future.successful(acc + in)))
+          .toMat(TestSink.probe)(Keep.both)
+          .run()
+
+      pub.sendNext(1)
+      sub.request(10)
+      sub.expectNext(0)
+      sub.expectNext(1)
       pub.sendComplete()
       sub.expectComplete()
     }
@@ -117,6 +135,28 @@ class FlowScanAsyncSpec extends StreamSpec {
           .expectNext(1, 1)
           .expectComplete()
       }
+
+      "skip error values and handle stage completion after future get resolved" in {
+        val promises = Promise[Int].success(1) :: Promise[Int] :: Nil
+        val (pub, sub) = whenEventualFuture(promises, 0, decider = Supervision.restartingDecider)
+        pub.sendNext(0)
+        sub.expectNext(0, 1)
+        pub.sendNext(1)
+        promises(1).complete(Failure(TE("bang")))
+        pub.sendComplete()
+        sub.expectComplete()
+      }
+
+      "skip error values and handle stage completion before future get resolved" in {
+        val promises = Promise[Int].success(1) :: Promise[Int] :: Nil
+        val (pub, sub) = whenEventualFuture(promises, 0, decider = Supervision.restartingDecider)
+        pub.sendNext(0)
+        sub.expectNext(0, 1)
+        pub.sendNext(1)
+        pub.sendComplete()
+        promises(1).complete(Failure(TE("bang")))
+        sub.expectComplete()
+      }
     }
 
     "with the resuming decider" should {
@@ -132,6 +172,28 @@ class FlowScanAsyncSpec extends StreamSpec {
         whenFailedFuture(elements, 0, decider = Supervision.resumingDecider)
           .expectNext(1, 2)
           .expectComplete()
+      }
+
+      "skip error values and handle stage completion after future get resolved" in {
+        val promises = Promise[Int].success(1) :: Promise[Int] :: Nil
+        val (pub, sub) = whenEventualFuture(promises, 0, decider = Supervision.resumingDecider)
+        pub.sendNext(0)
+        sub.expectNext(0, 1)
+        pub.sendNext(1)
+        promises(1).complete(Failure(TE("bang")))
+        pub.sendComplete()
+        sub.expectComplete()
+      }
+
+      "skip error values and handle stage completion before future get resolved" in {
+        val promises = Promise[Int].success(1) :: Promise[Int] :: Nil
+        val (pub, sub) = whenEventualFuture(promises, 0, decider = Supervision.resumingDecider)
+        pub.sendNext(0)
+        sub.expectNext(0, 1)
+        pub.sendNext(1)
+        pub.sendComplete()
+        promises(1).complete(Failure(TE("bang")))
+        sub.expectComplete()
       }
     }
 
@@ -175,6 +237,27 @@ class FlowScanAsyncSpec extends StreamSpec {
         .runWith(TestSink.probe[Int])
         .request(elements.size + 1)
         .expectNext(zero)
+    }
+
+    def whenEventualFuture(
+      promises: immutable.Seq[Promise[Int]],
+      zero:     Int,
+      decider:  Supervision.Decider         = Supervision.stoppingDecider
+    ): (TestPublisher.Probe[Int], TestSubscriber.Probe[Int]) = {
+      require(promises.nonEmpty, "must be at least one promise")
+      val promiseScanFlow = Flow[Int].scanAsync(zero) { (accumulator: Int, next: Int) ⇒
+        promises(next).future
+      }
+
+      val (pub, sub) = TestSource.probe[Int]
+        .via(promiseScanFlow)
+        .withAttributes(ActorAttributes.supervisionStrategy(decider))
+        .toMat(TestSink.probe)(Keep.both)
+        .run()
+
+      sub.request(promises.size + 1)
+
+      (pub, sub)
     }
 
     def whenFailedFuture(

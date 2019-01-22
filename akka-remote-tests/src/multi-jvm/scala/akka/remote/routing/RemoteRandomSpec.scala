@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.remote.routing
 
 import scala.concurrent.duration._
@@ -10,7 +11,7 @@ import akka.actor.Address
 import akka.actor.PoisonPill
 import akka.actor.Props
 import akka.remote.RemotingMultiNodeSpec
-import akka.remote.testkit.{ MultiNodeConfig, MultiNodeSpec, STMultiNodeSpec }
+import akka.remote.testkit.MultiNodeConfig
 import akka.routing.Broadcast
 import akka.routing.RandomPool
 import akka.routing.RoutedActorRef

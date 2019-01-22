@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2018-2019 Lightbend Inc. <https://www.lightbend.com>
+ */
+
 package docs.akka.cluster.typed
 
 import java.nio.charset.StandardCharsets
@@ -24,7 +28,7 @@ class PingSerializer(system: ExtendedActorSystem) extends SerializerWithStringMa
 
   override def toBinary(msg: AnyRef) = msg match {
     case Ping(who) ⇒
-      ActorRefResolver(system.toTyped).toSerializationFormat(who).getBytes(StandardCharsets.UTF_8)
+      actorRefResolver.toSerializationFormat(who).getBytes(StandardCharsets.UTF_8)
     case Pong ⇒
       Array.emptyByteArray
   }

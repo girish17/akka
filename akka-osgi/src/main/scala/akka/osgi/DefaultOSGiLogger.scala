@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.osgi
 
 import akka.event.Logging
@@ -33,7 +34,7 @@ class DefaultOSGiLogger extends DefaultLogger {
      *
      * @param logService OSGi LogService that has been registered,
      */
-    def setLogService(logService: LogService) {
+    def setLogService(logService: LogService): Unit = {
       messagesToLog.foreach(x ⇒ {
         logMessage(logService, x)
       })
@@ -67,7 +68,7 @@ class DefaultOSGiLogger extends DefaultLogger {
    * @param logService  OSGi LogService registered and used for logging
    * @param event akka LogEvent that is logged using the LogService
    */
-  def logMessage(logService: LogService, event: LogEvent) {
+  def logMessage(logService: LogService, event: LogEvent): Unit = {
     event match {
       case error: Logging.Error if error.cause != NoCause ⇒
         logService.log(event.level.asInt, messageFormat.format(timestamp(event), event.thread.getName, event.logSource, event.message), error.cause)

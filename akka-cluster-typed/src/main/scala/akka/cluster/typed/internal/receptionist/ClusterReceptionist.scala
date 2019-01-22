@@ -1,192 +1,314 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.cluster.typed.internal.receptionist
+
+import akka.actor.typed.internal.receptionist.{ AbstractServiceKey, ReceptionistBehaviorProvider, ReceptionistMessages }
+import akka.actor.typed.receptionist.Receptionist.Command
+import akka.actor.typed.receptionist.ServiceKey
+import akka.actor.typed.scaladsl.adapter._
+import akka.actor.typed.scaladsl.{ ActorContext, Behaviors }
+import akka.actor.typed.{ ActorRef, Behavior, Terminated }
+import akka.annotation.InternalApi
+import akka.cluster.ClusterEvent.MemberRemoved
+import akka.cluster.ddata.typed.scaladsl.DistributedData
+import akka.cluster.{ ddata ⇒ dd }
+import akka.cluster.ddata.{ ORMultiMap, ORMultiMapKey, Replicator }
+import akka.cluster.{ Cluster, ClusterEvent, UniqueAddress }
+import akka.remote.AddressUidExtension
+import akka.util.TypedMultiMap
 
 import scala.concurrent.duration._
 
-import akka.annotation.InternalApi
-import akka.cluster.Cluster
-import akka.cluster.ddata.DistributedData
-import akka.cluster.ddata.ORMultiMap
-import akka.cluster.ddata.ORMultiMapKey
-import akka.cluster.ddata.Replicator
-import akka.cluster.ddata.Replicator.WriteConsistency
-import akka.actor.typed.ActorRef
-import akka.actor.typed.Behavior
-import akka.actor.typed.internal.receptionist.ReceptionistBehaviorProvider
-import akka.actor.typed.internal.receptionist.ReceptionistImpl
-import akka.actor.typed.internal.receptionist.ReceptionistImpl._
-import akka.actor.typed.receptionist.Receptionist.AbstractServiceKey
-import akka.actor.typed.receptionist.Receptionist.AllCommands
-import akka.actor.typed.receptionist.Receptionist.Command
-import akka.actor.typed.receptionist.ServiceKey
-import akka.actor.typed.scaladsl.ActorContext
-import scala.language.existentials
-import scala.language.higherKinds
-
-import akka.actor.typed.ActorSystem
-import akka.actor.Address
-import akka.cluster.ClusterEvent
-import akka.cluster.ClusterEvent.MemberRemoved
-import akka.util.Helpers.toRootLowerCase
-import com.typesafe.config.Config
-
-/** Internal API */
+/** INTERNAL API */
 @InternalApi
 private[typed] object ClusterReceptionist extends ReceptionistBehaviorProvider {
-  private final val ReceptionistKey = ORMultiMapKey[ServiceKey[_], ActorRef[_]]("ReceptionistKey")
-  private final val EmptyORMultiMap = ORMultiMap.empty[ServiceKey[_], ActorRef[_]]
 
-  case class TypedORMultiMap[K[_], V[_]](map: ORMultiMap[K[_], V[_]]) extends AnyVal {
-    def getOrElse[T](key: K[T], default: ⇒ Set[V[T]]): Set[V[T]] =
-      map.getOrElse(key, default.asInstanceOf[Set[V[_]]]).asInstanceOf[Set[V[T]]]
+  type SubscriptionsKV[K <: AbstractServiceKey] = ActorRef[ReceptionistMessages.Listing[K#Protocol]]
+  type SubscriptionRegistry = TypedMultiMap[AbstractServiceKey, SubscriptionsKV]
+  type DDataKey = ORMultiMapKey[ServiceKey[_], Entry]
 
-    def getOrEmpty[T](key: K[T]): Set[V[T]] = getOrElse(key, Set.empty)
+  final val EmptyORMultiMap = ORMultiMap.empty[ServiceKey[_], Entry]
 
-    def addBinding[T](key: K[T], value: V[T])(implicit cluster: Cluster): TypedORMultiMap[K, V] =
-      TypedORMultiMap[K, V](map.addBinding(key, value))
-
-    def removeBinding[T](key: K[T], value: V[T])(implicit cluster: Cluster): TypedORMultiMap[K, V] =
-      TypedORMultiMap[K, V](map.removeBinding(key, value))
-
-    def toORMultiMap: ORMultiMap[K[_], V[_]] = map
-  }
-  object TypedORMultiMap {
-    def empty[K[_], V[_]] = TypedORMultiMap[K, V](ORMultiMap.empty[K[_], V[_]])
-  }
-  type ServiceRegistry = TypedORMultiMap[ServiceKey, ActorRef]
-  object ServiceRegistry {
-    def empty: ServiceRegistry = TypedORMultiMap.empty
-    def apply(map: ORMultiMap[ServiceKey[_], ActorRef[_]]): ServiceRegistry = TypedORMultiMap[ServiceKey, ActorRef](map)
+  // values contain system uid to make it possible to discern actors at the same
+  // path in different incarnations of a cluster node
+  final case class Entry(ref: ActorRef[_], systemUid: Long) {
+    def uniqueAddress(selfUniqueAddress: UniqueAddress): UniqueAddress =
+      if (ref.path.address.hasLocalScope) selfUniqueAddress
+      else UniqueAddress(ref.path.address, systemUid)
+    override def toString = ref.path.toString + "#" + ref.path.uid
   }
 
-  private case object RemoveTick
+  private sealed trait InternalCommand extends Command
+  private final case class RegisteredActorTerminated[T](key: ServiceKey[T], ref: ActorRef[T]) extends InternalCommand
+  private final case class SubscriberTerminated[T](key: ServiceKey[T], ref: ActorRef[ReceptionistMessages.Listing[T]]) extends InternalCommand
+  private final case class NodeRemoved(addresses: UniqueAddress) extends InternalCommand
+  private final case class ChangeFromReplicator(
+    key:   DDataKey,
+    value: ORMultiMap[ServiceKey[_], Entry]) extends InternalCommand
+  private case object RemoveTick extends InternalCommand
+  private case object PruneTombstonesTick extends InternalCommand
 
-  def behavior: Behavior[Command] = clusterBehavior
-  val clusterBehavior: Behavior[Command] = ReceptionistImpl.init(ctx ⇒ clusteredReceptionist(ctx))
-
-  object ClusterReceptionistSettings {
-    def apply(system: ActorSystem[_]): ClusterReceptionistSettings =
-      apply(system.settings.config.getConfig("akka.cluster.typed.receptionist"))
-
-    def apply(config: Config): ClusterReceptionistSettings = {
-      val writeTimeout = 5.seconds // the timeout is not important
-      val writeConsistency = {
-        val key = "write-consistency"
-        toRootLowerCase(config.getString(key)) match {
-          case "local"    ⇒ Replicator.WriteLocal
-          case "majority" ⇒ Replicator.WriteMajority(writeTimeout)
-          case "all"      ⇒ Replicator.WriteAll(writeTimeout)
-          case _          ⇒ Replicator.WriteTo(config.getInt(key), writeTimeout)
-        }
-      }
-      ClusterReceptionistSettings(
-        writeConsistency,
-        pruningInterval = config.getDuration("pruning-interval", MILLISECONDS).millis
-      )
+  // captures setup/dependencies so we can avoid doing it over and over again
+  final class Setup(ctx: ActorContext[Command]) {
+    val untypedSystem = ctx.system.toUntyped
+    val settings = ClusterReceptionistSettings(ctx.system)
+    val replicator = dd.DistributedData(untypedSystem).replicator
+    val selfSystemUid = AddressUidExtension(untypedSystem).longAddressUid
+    lazy val keepTombstonesFor = cluster.settings.PruneGossipTombstonesAfter match {
+      case f: FiniteDuration ⇒ f
+      case _                 ⇒ throw new IllegalStateException("Cannot actually happen")
     }
+    val cluster = Cluster(untypedSystem)
+    implicit val selfNodeAddress = DistributedData(ctx.system).selfUniqueAddress
+    def newTombstoneDeadline() = Deadline(keepTombstonesFor)
+    def selfUniqueAddress: UniqueAddress = cluster.selfUniqueAddress
   }
 
-  case class ClusterReceptionistSettings(
-    writeConsistency: WriteConsistency,
-    pruningInterval:  FiniteDuration)
+  override def behavior: Behavior[Command] =
+    Behaviors.setup { ctx ⇒
+      Behaviors.withTimers { timers ⇒
+
+        val setup = new Setup(ctx)
+        val registry = ShardedServiceRegistry(setup.settings.distributedKeyCount)
+
+        // subscribe to changes from other nodes
+        val replicatorMessageAdapter: ActorRef[Replicator.ReplicatorMessage] =
+          ctx.messageAdapter[Replicator.ReplicatorMessage] {
+            case changed: Replicator.Changed[_] @unchecked ⇒
+              ChangeFromReplicator(
+                changed.key.asInstanceOf[DDataKey],
+                changed.dataValue.asInstanceOf[ORMultiMap[ServiceKey[_], Entry]])
+          }
+
+        registry.allDdataKeys.foreach(key ⇒
+          setup.replicator ! Replicator.Subscribe(key, replicatorMessageAdapter.toUntyped)
+        )
+
+        // remove entries when members are removed
+        val clusterEventMessageAdapter: ActorRef[MemberRemoved] =
+          ctx.messageAdapter[MemberRemoved] { case MemberRemoved(member, _) ⇒ NodeRemoved(member.uniqueAddress) }
+        setup.cluster.subscribe(clusterEventMessageAdapter.toUntyped, ClusterEvent.InitialStateAsEvents, classOf[MemberRemoved])
+
+        // also periodic cleanup in case removal from ORMultiMap is skipped due to concurrent update,
+        // which is possible for OR CRDTs - done with an adapter to leverage the existing NodesRemoved message
+        timers.startPeriodicTimer("remove-nodes", RemoveTick, setup.settings.pruningInterval)
+
+        // default tomstone keepalive is 24h (based on prune-gossip-tombstones-after) and keeping the actorrefs
+        // around isn't very costly so don't prune often
+        timers.startPeriodicTimer("prune-tombstones", PruneTombstonesTick, setup.keepTombstonesFor / 24)
+
+        behavior(
+          setup,
+          registry,
+          TypedMultiMap.empty[AbstractServiceKey, SubscriptionsKV]
+        )
+      }
+    }
 
   /**
-   * Returns an ReceptionistImpl.ExternalInterface that synchronizes registered services with
+   * @param registry The last seen state from the replicator - only updated when we get an update from th replicator
+   * @param subscriptions Locally subscriptions, not replicated
    */
-  def clusteredReceptionist(ctx: ActorContext[AllCommands]): ReceptionistImpl.ExternalInterface[ServiceRegistry] = {
-    import akka.actor.typed.scaladsl.adapter._
-    val untypedSystem = ctx.system.toUntyped
+  def behavior(
+    setup:         Setup,
+    registry:      ShardedServiceRegistry,
+    subscriptions: SubscriptionRegistry): Behavior[Command] =
+    Behaviors.setup { ctx ⇒
+      import setup._
 
-    val settings = ClusterReceptionistSettings(ctx.system)
+      // Helper to create new behavior
+      def next(
+        newState:         ShardedServiceRegistry = registry,
+        newSubscriptions: SubscriptionRegistry   = subscriptions) =
+        behavior(setup, newState, newSubscriptions)
 
-    val replicator = DistributedData(untypedSystem).replicator
-    implicit val cluster = Cluster(untypedSystem)
+      /*
+       * Hack to allow multiple termination notifications per target
+       * FIXME: replace by simple map in our state
+       */
+      def watchWith(ctx: ActorContext[Command], target: ActorRef[_], msg: InternalCommand): Unit =
+        ctx.spawnAnonymous[Nothing](Behaviors.setup[Nothing] { innerCtx ⇒
+          innerCtx.watch(target)
+          Behaviors.receive[Nothing]((_, _) ⇒ Behaviors.same)
+            .receiveSignal {
+              case (_, Terminated(`target`)) ⇒
+                ctx.self ! msg
+                Behaviors.stopped
+            }
+        })
 
-    var state = ServiceRegistry.empty
-
-    def diff(lastState: ServiceRegistry, newState: ServiceRegistry): Map[AbstractServiceKey, Set[ActorRef[_]]] = {
-      def changesForKey[T](registry: Map[AbstractServiceKey, Set[ActorRef[_]]], key: ServiceKey[T]): Map[AbstractServiceKey, Set[ActorRef[_]]] = {
-        val oldValues = lastState.getOrEmpty(key)
-        val newValues = newState.getOrEmpty(key)
-        if (oldValues != newValues)
-          registry + (key → newValues.asInstanceOf[Set[ActorRef[_]]])
-        else
-          registry
+      def notifySubscribersFor(key: AbstractServiceKey, state: ServiceRegistry): Unit = {
+        // filter tombstoned refs to avoid an extra update
+        // to subscribers in the case of lost removals (because of how ORMultiMap works)
+        val refsForKey = state.actorRefsFor(key)
+        val refsWithoutTombstoned =
+          if (registry.tombstones.isEmpty) refsForKey
+          else refsForKey.filterNot(registry.hasTombstone)
+        val msg = ReceptionistMessages.Listing(key.asServiceKey, refsWithoutTombstoned)
+        subscriptions.get(key).foreach(_ ! msg)
       }
 
-      val allKeys = lastState.toORMultiMap.entries.keySet ++ newState.toORMultiMap.entries.keySet
-      allKeys
-        .foldLeft(Map.empty[AbstractServiceKey, Set[ActorRef[_]]])(changesForKey(_, _))
-    }
+      def nodesRemoved(addresses: Set[UniqueAddress]): Behavior[Command] = {
+        // ok to update from several nodes but more efficient to try to do it from one node
+        if (cluster.state.leader.contains(cluster.selfAddress) && addresses.nonEmpty) {
+          def isOnRemovedNode(entry: Entry): Boolean = addresses(entry.uniqueAddress(setup.selfUniqueAddress))
 
-    val externalInterface = new ExternalInterface[ServiceRegistry] {
-      private def updateRegistry(update: ServiceRegistry ⇒ ServiceRegistry): Unit = {
-        state = update(state)
-        replicator ! Replicator.Update(ReceptionistKey, EmptyORMultiMap, settings.writeConsistency) { registry ⇒
-          update(ServiceRegistry(registry)).toORMultiMap
+          val removals = {
+            registry.allServices.foldLeft(Map.empty[AbstractServiceKey, Set[Entry]]) {
+              case (acc, (key, entries)) ⇒
+                val removedEntries = entries.filter(isOnRemovedNode)
+                if (removedEntries.isEmpty) acc // no change
+                else acc + (key -> removedEntries)
+            }
+          }
+
+          if (removals.nonEmpty) {
+            if (ctx.log.isDebugEnabled)
+              ctx.log.debug(
+                "Node(s) [{}] removed, updating registry removing: [{}]",
+                addresses.mkString(","),
+                removals.map {
+                  case (key, entries) ⇒ key.asServiceKey.id -> entries.mkString("[", ", ", "]")
+                }.mkString(","))
+
+            // shard changes over the ddata keys they belong to
+            val removalsPerDdataKey = registry.entriesPerDdataKey(removals)
+
+            removalsPerDdataKey.foreach {
+              case (ddataKey, removalForKey) ⇒
+                replicator ! Replicator.Update(ddataKey, EmptyORMultiMap, settings.writeConsistency) { registry ⇒
+                  ServiceRegistry(registry).removeAll(removalForKey).toORMultiMap
+                }
+            }
+
+          }
+
         }
+        Behaviors.same
       }
 
-      def onRegister[T](key: ServiceKey[T], address: ActorRef[T]): Unit =
-        updateRegistry(_.addBinding(key, address))
+      def onCommand(cmd: Command): Behavior[Command] = cmd match {
+        case ReceptionistMessages.Register(key, serviceInstance, maybeReplyTo) ⇒
+          val entry = Entry(serviceInstance, setup.selfSystemUid)
+          ctx.log.debug("Actor was registered: [{}] [{}]", key, entry)
+          watchWith(ctx, serviceInstance, RegisteredActorTerminated(key, serviceInstance))
+          maybeReplyTo match {
+            case Some(replyTo) ⇒ replyTo ! ReceptionistMessages.Registered(key, serviceInstance)
+            case None          ⇒
+          }
+          val ddataKey = registry.ddataKeyFor(key)
+          replicator ! Replicator.Update(ddataKey, EmptyORMultiMap, settings.writeConsistency) { registry ⇒
+            ServiceRegistry(registry).addBinding(key, entry).toORMultiMap
+          }
+          Behaviors.same
 
-      def onUnregister[T](key: ServiceKey[T], address: ActorRef[T]): Unit =
-        updateRegistry(_.removeBinding(key, address))
+        case ReceptionistMessages.Find(key, replyTo) ⇒
+          replyTo ! ReceptionistMessages.Listing(key.asServiceKey, registry.actorRefsFor(key))
+          Behaviors.same
 
-      def onExternalUpdate(update: ServiceRegistry): Unit = {
-        state = update
+        case ReceptionistMessages.Subscribe(key, subscriber) ⇒
+          watchWith(ctx, subscriber, SubscriberTerminated(key, subscriber))
+
+          // immediately reply with initial listings to the new subscriber
+          subscriber ! ReceptionistMessages.Listing(key.asServiceKey, registry.actorRefsFor(key))
+
+          next(newSubscriptions = subscriptions.inserted(key)(subscriber))
       }
-    }
 
-    val replicatorMessageAdapter: ActorRef[Replicator.ReplicatorMessage] =
-      ctx.messageAdapter[Replicator.ReplicatorMessage] {
-        case changed @ Replicator.Changed(ReceptionistKey) ⇒
-          val value = changed.get(ReceptionistKey)
-          val oldState = state
+      def onInternalCommand(cmd: InternalCommand): Behavior[Command] = cmd match {
+
+        case SubscriberTerminated(key, subscriber) ⇒
+          next(newSubscriptions = subscriptions.removed(key)(subscriber))
+
+        case RegisteredActorTerminated(key, serviceInstance) ⇒
+          val entry = Entry(serviceInstance, setup.selfSystemUid)
+          ctx.log.debug("Registered actor terminated: [{}] [{}]", key.asServiceKey.id, entry)
+          val ddataKey = registry.ddataKeyFor(key)
+          replicator ! Replicator.Update(ddataKey, EmptyORMultiMap, settings.writeConsistency) { registry ⇒
+            ServiceRegistry(registry).removeBinding(key, entry).toORMultiMap
+          }
+          // tombstone removals so they are not re-added by merging with other concurrent
+          // registrations for the same key
+          next(newState = registry.addTombstone(serviceInstance, setup.newTombstoneDeadline()))
+
+        case ChangeFromReplicator(ddataKey, value) ⇒
+          // every change will come back this way - this is where the local notifications happens
           val newState = ServiceRegistry(value)
-          val changes = diff(oldState, newState)
-          externalInterface.RegistrationsChangedExternally(changes, newState)
-      }
+          val changedKeys = registry.collectChangedKeys(ddataKey, newState)
+          val newRegistry = registry.withServiceRegistry(ddataKey, newState)
+          if (changedKeys.nonEmpty) {
+            if (ctx.log.isDebugEnabled) {
+              ctx.log.debug(
+                "Change from replicator: [{}], changes: [{}], tombstones [{}]",
+                newState.entries.entries,
+                changedKeys.map(key ⇒
+                  key.asServiceKey.id -> newState.entriesFor(key).mkString("[", ", ", "]")
+                ).mkString(", "),
+                registry.tombstones.mkString(", ")
+              )
+            }
+            changedKeys.foreach { changedKey ⇒
+              notifySubscribersFor(changedKey, newState)
 
-    replicator ! Replicator.Subscribe(ReceptionistKey, replicatorMessageAdapter.toUntyped)
+              // because of how ORMultiMap/ORset works, we could have a case where an actor we removed
+              // is re-introduced because of a concurrent update, in that case we need to re-remove it
+              val serviceKey = changedKey.asServiceKey
+              val tombstonedButReAdded =
+                newRegistry.actorRefsFor(serviceKey).filter(newRegistry.hasTombstone)
+              tombstonedButReAdded.foreach { actorRef ⇒
+                ctx.log.debug("Saw actorref that was tomstoned {}, re-removing.", actorRef)
+                replicator ! Replicator.Update(ddataKey, EmptyORMultiMap, settings.writeConsistency) { registry ⇒
+                  ServiceRegistry(registry).removeBinding(serviceKey, Entry(actorRef, setup.selfSystemUid)).toORMultiMap
+                }
+              }
+            }
 
-    // remove entries when members are removed
-    val clusterEventMessageAdapter: ActorRef[MemberRemoved] =
-      ctx.messageAdapter[MemberRemoved] {
-        case MemberRemoved(member, _) ⇒
+            next(newRegistry)
+          } else {
+            Behaviors.same
+          }
+
+        case NodeRemoved(uniqueAddress) ⇒
           // ok to update from several nodes but more efficient to try to do it from one node
           if (cluster.state.leader.contains(cluster.selfAddress)) {
-            if (member.address == cluster.selfAddress) NodesRemoved.empty
-            else NodesRemoved(Set(member.address))
+            ctx.log.debug(s"Leader node observed removed address [{}]", uniqueAddress)
+            nodesRemoved(Set(uniqueAddress))
+          } else Behaviors.same
+
+        case RemoveTick ⇒
+          // ok to update from several nodes but more efficient to try to do it from one node
+          if (cluster.state.leader.contains(cluster.selfAddress)) {
+            val allAddressesInState: Set[UniqueAddress] = registry.allUniqueAddressesInState(setup.selfUniqueAddress)
+            val clusterAddresses = cluster.state.members.map(_.uniqueAddress)
+            val notInCluster = allAddressesInState diff clusterAddresses
+
+            if (notInCluster.isEmpty) Behavior.same
+            else {
+              if (ctx.log.isDebugEnabled)
+                ctx.log.debug("Leader node cleanup tick, removed nodes: [{}]", notInCluster.mkString(","))
+              nodesRemoved(notInCluster)
+            }
           } else
-            NodesRemoved.empty
+            Behavior.same
+
+        case PruneTombstonesTick ⇒
+          val prunedRegistry = registry.pruneTombstones()
+          if (prunedRegistry eq registry) Behaviors.same
+          else {
+            ctx.log.debug(s"Pruning tombstones")
+            next(prunedRegistry)
+          }
       }
 
-    cluster.subscribe(clusterEventMessageAdapter.toUntyped, ClusterEvent.InitialStateAsEvents, classOf[MemberRemoved])
-
-    // also periodic cleanup in case removal from ORMultiMap is skipped due to concurrent update,
-    // which is possible for OR CRDTs
-    val removeTickMessageAdapter: ActorRef[RemoveTick.type] =
-      ctx.messageAdapter[RemoveTick.type] { _ ⇒
-        // ok to update from several nodes but more efficient to try to do it from one node
-        if (cluster.state.leader.contains(cluster.selfAddress)) {
-          val allAddressesInState: Set[Address] = state.map.entries.flatMap {
-            case (_, values) ⇒
-              // don't care about local (empty host:port addresses)
-              values.collect { case ref if ref.path.address.hasGlobalScope ⇒ ref.path.address }
-          }(collection.breakOut)
-          val clusterAddresses = cluster.state.members.map(_.address)
-          val diff = allAddressesInState diff clusterAddresses
-          if (diff.isEmpty) NodesRemoved.empty else NodesRemoved(diff)
-        } else
-          NodesRemoved.empty
+      Behaviors.receive[Command] { (_, msg) ⇒
+        msg match {
+          // support two heterogenous types of messages without union types
+          case cmd: InternalCommand ⇒ onInternalCommand(cmd)
+          case cmd: Command         ⇒ onCommand(cmd)
+          case _                    ⇒ Behaviors.unhandled
+        }
       }
-
-    ctx.system.scheduler.schedule(settings.pruningInterval, settings.pruningInterval,
-      removeTickMessageAdapter.toUntyped, RemoveTick)(ctx.system.executionContext)
-
-    externalInterface
-  }
+    }
 }

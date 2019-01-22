@@ -1,5 +1,5 @@
-/**
- * Copyright (C) 2015-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2015-2019 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.stream.impl
@@ -10,9 +10,11 @@ import akka.stream.impl.StreamLayout.AtomicModule
 import akka.stream.impl.TraversalBuilder.{ AnyFunction1, AnyFunction2 }
 import akka.stream.scaladsl.Keep
 import akka.util.OptionVal
-
 import scala.language.existentials
 import scala.collection.immutable.Map.Map1
+
+import akka.stream.impl.fusing.GraphStageModule
+import akka.stream.impl.fusing.GraphStages.SingleSource
 
 /**
  * INTERNAL API
@@ -334,6 +336,37 @@ import scala.collection.immutable.Map.Map1
     }
     slot
   }
+
+  /**
+   * Try to find `SingleSource` or wrapped such. This is used as a
+   * performance optimization in FlattenMerge and possibly other places.
+   */
+  def getSingleSource[A >: Null](graph: Graph[SourceShape[A], _]): OptionVal[SingleSource[A]] = {
+    graph match {
+      case single: SingleSource[A] @unchecked ⇒ OptionVal.Some(single)
+      case _ ⇒
+        graph.traversalBuilder match {
+          case l: LinearTraversalBuilder ⇒
+            l.pendingBuilder match {
+              case OptionVal.Some(a: AtomicTraversalBuilder) ⇒
+                a.module match {
+                  case m: GraphStageModule[_, _] ⇒
+                    m.stage match {
+                      case single: SingleSource[A] @unchecked ⇒
+                        // It would be != EmptyTraversal if mapMaterializedValue was used and then we can't optimize.
+                        if ((l.traversalSoFar eq EmptyTraversal) && !l.attributes.isAsync)
+                          OptionVal.Some(single)
+                        else OptionVal.None
+                      case _ ⇒ OptionVal.None
+                    }
+                  case _ ⇒ OptionVal.None
+                }
+              case _ ⇒ OptionVal.None
+            }
+          case _ ⇒ OptionVal.None
+        }
+    }
+  }
 }
 
 /**
@@ -556,7 +589,7 @@ import scala.collection.immutable.Map.Map1
         val inlets = module.shape.inlets
         if (inlets.isEmpty) Map.empty
         else if (Shape.hasOnePort(inlets)) new Map1(inlets.head, inlets.head.id)
-        else inlets.map(in ⇒ in.asInstanceOf[InPort] → in.id)(collection.breakOut)
+        else inlets.iterator.map(in ⇒ in.asInstanceOf[InPort] → in.id).toMap
       }
       CompletedTraversalBuilder(
         traversalSoFar = MaterializeAtomic(module, newOutToSlot),

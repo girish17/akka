@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2015-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2015-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.stream.impl
 
 import akka.annotation.InternalApi
@@ -43,16 +44,18 @@ import scala.util.control.NonFatal
           case None       ⇒ closeStage()
         }
       } catch {
-        case NonFatal(ex) ⇒ decider(ex) match {
-          case Supervision.Stop ⇒
-            close(blockingStream)
-            failStage(ex)
-          case Supervision.Restart ⇒
-            restartState()
-            resumingMode = true
-          case Supervision.Resume ⇒
-            resumingMode = true
-        }
+        case NonFatal(ex) ⇒
+          decider(ex) match {
+            case Supervision.Stop ⇒
+              open = false
+              close(blockingStream)
+              failStage(ex)
+            case Supervision.Restart ⇒
+              restartState()
+              resumingMode = true
+            case Supervision.Resume ⇒
+              resumingMode = true
+          }
       }
       if (resumingMode) onPull()
     }
@@ -60,6 +63,7 @@ import scala.util.control.NonFatal
     override def onDownstreamFinish(): Unit = closeStage()
 
     private def restartState(): Unit = {
+      open = false
       close(blockingStream)
       blockingStream = create()
       open = true

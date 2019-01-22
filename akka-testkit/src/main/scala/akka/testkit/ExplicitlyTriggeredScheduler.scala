@@ -1,10 +1,12 @@
+/*
+ * Copyright (C) 2018-2019 Lightbend Inc. <https://www.lightbend.com>
+ */
+
 package akka.testkit
 
 import java.util.concurrent.ThreadFactory
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
-
-import com.typesafe.config.Config
 
 import scala.annotation.tailrec
 import scala.collection.JavaConverters._
@@ -15,6 +17,8 @@ import scala.util.Try
 import akka.actor.Cancellable
 import akka.actor.Scheduler
 import akka.event.LoggingAdapter
+import akka.util.unused
+import com.typesafe.config.Config
 
 /**
  * For testing: scheduler that does not look at the clock, but must be
@@ -26,7 +30,7 @@ import akka.event.LoggingAdapter
  * easier, but these tests might fail to catch race conditions that only
  * happen when tasks are scheduled in parallel in 'real time'.
  */
-class ExplicitlyTriggeredScheduler(config: Config, log: LoggingAdapter, tf: ThreadFactory) extends Scheduler {
+class ExplicitlyTriggeredScheduler(@unused config: Config, log: LoggingAdapter, @unused tf: ThreadFactory) extends Scheduler {
 
   private case class Item(time: Long, interval: Option[FiniteDuration], runnable: Runnable)
 

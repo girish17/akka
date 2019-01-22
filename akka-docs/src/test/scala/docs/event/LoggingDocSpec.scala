@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package docs.event
 
 import akka.actor.{ Actor, Props, DeadLetter }
@@ -16,7 +17,7 @@ object LoggingDocSpec {
     override def preStart() = {
       log.debug("Starting")
     }
-    override def preRestart(reason: Throwable, message: Option[Any]) {
+    override def preRestart(reason: Throwable, message: Option[Any]): Unit = {
       log.error(reason, "Restarting due to [{}] when processing [{}]",
         reason.getMessage, message.getOrElse(""))
     }

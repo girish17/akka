@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.cluster.ddata.typed.scaladsl
 
 import akka.actor.NoSerializationVerificationNeeded
@@ -49,7 +50,7 @@ object Replicator {
      * Convenience for `ask`.
      */
     def apply[A <: ReplicatedData](key: Key[A], consistency: ReadConsistency): ActorRef[GetResponse[A]] ⇒ Get[A] =
-      (replyTo ⇒ Get(key, consistency, replyTo, None))
+      replyTo ⇒ Get(key, consistency, replyTo, None)
   }
 
   /**

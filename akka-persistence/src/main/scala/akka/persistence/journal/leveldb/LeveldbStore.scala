@@ -1,6 +1,5 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
- * Copyright (C) 2012-2016 Eligotech BV.
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.persistence.journal.leveldb
@@ -182,12 +181,12 @@ private[persistence] trait LeveldbStore extends Actor with WriteJournalBase with
   def tagAsPersistenceId(tag: String): String =
     tagPersistenceIdPrefix + tag
 
-  override def preStart() {
+  override def preStart(): Unit = {
     leveldb = leveldbFactory.open(leveldbDir, if (nativeLeveldb) leveldbOptions else leveldbOptions.compressionType(CompressionType.NONE))
     super.preStart()
   }
 
-  override def postStop() {
+  override def postStop(): Unit = {
     leveldb.close()
     super.postStop()
   }

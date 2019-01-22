@@ -1,5 +1,5 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.io
@@ -15,6 +15,7 @@ import scala.collection.immutable
 import scala.collection.JavaConverters._
 import akka.util.{ ByteString, Helpers }
 import akka.util.Helpers.Requiring
+import akka.util.JavaDurationConverters._
 import akka.actor._
 import java.lang.{ Iterable ⇒ JIterable }
 import java.nio.file.Path
@@ -459,8 +460,19 @@ object Tcp extends ExtensionId[TcpExt] with ExtensionIdProvider {
       newInstance._cause = Some(cause)
       newInstance
     }
+
     @InternalApi
-    private[akka] def causedByString = _cause.map(c ⇒ s" because of ${c.getMessage}").getOrElse("")
+    private[akka] def causedByString = _cause.map(t ⇒ {
+      val msg =
+        if (t.getCause == null)
+          t.getMessage
+        else if (t.getCause.getCause == null)
+          s"${t.getMessage}, caused by: ${t.getCause}"
+        else
+          s"${t.getMessage}, caused by: ${t.getCause}, caused by: ${t.getCause.getCause}"
+
+      s" because of ${t.getClass.getName}: $msg"
+    }).getOrElse("")
 
     override def toString: String = s"CommandFailed($cmd)$causedByString"
   }
@@ -565,11 +577,11 @@ class TcpExt(system: ExtendedActorSystem) extends IO.Extension {
     val MaxDirectBufferPoolSize: Int = getInt("direct-buffer-pool-limit")
     val RegisterTimeout: Duration = getString("register-timeout") match {
       case "infinite" ⇒ Duration.Undefined
-      case x          ⇒ _config.getMillisDuration("register-timeout")
+      case _          ⇒ _config.getMillisDuration("register-timeout")
     }
     val ReceivedMessageSizeLimit: Int = getString("max-received-message-size") match {
       case "unlimited" ⇒ Int.MaxValue
-      case x           ⇒ getIntBytes("max-received-message-size")
+      case _           ⇒ getIntBytes("max-received-message-size")
     }
     val ManagementDispatcher: String = getString("management-dispatcher")
     val FileIODispatcher: String = getString("file-io-dispatcher")
@@ -668,6 +680,25 @@ object TcpMessage {
     options:       JIterable[SocketOption],
     timeout:       FiniteDuration,
     pullMode:      Boolean): Command = Connect(remoteAddress, Option(localAddress), options, Option(timeout), pullMode)
+
+  /**
+   * The Connect message is sent to the TCP manager actor, which is obtained via
+   * [[TcpExt#getManager]]. Either the manager replies with a [[Tcp.CommandFailed]]
+   * or the actor handling the new connection replies with a [[Tcp.Connected]]
+   * message.
+   *
+   * @param remoteAddress is the address to connect to
+   * @param localAddress optionally specifies a specific address to bind to
+   * @param options Please refer to [[TcpSO]] for a list of all supported options.
+   * @param timeout is the desired connection timeout, `null` means "no timeout"
+   * @param pullMode enables pull based reading from the connection
+   */
+  def connect(
+    remoteAddress: InetSocketAddress,
+    localAddress:  InetSocketAddress,
+    options:       JIterable[SocketOption],
+    timeout:       java.time.Duration,
+    pullMode:      Boolean): Command = connect(remoteAddress, localAddress, options, timeout.asScala, pullMode)
 
   /**
    * Connect to the given `remoteAddress` without binding to a local address and without
@@ -839,7 +870,7 @@ object TcpMessage {
    */
   def resumeAccepting(batchSize: Int): Command = ResumeAccepting(batchSize)
 
-  implicit private def fromJava[T](coll: JIterable[T]): immutable.Traversable[T] = {
+  implicit private def fromJava[T](coll: JIterable[T]): immutable.Iterable[T] = {
     akka.japi.Util.immutableSeq(coll)
   }
 }

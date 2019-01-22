@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2014-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2014-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.stream.scaladsl
 
 import java.util.concurrent.atomic.AtomicBoolean
@@ -8,7 +9,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import akka.Done
 import akka.stream.ActorMaterializer
 import akka.stream.testkit.{ StreamSpec, TestSubscriber }
-import akka.stream.testkit.Utils.assertAllStagesStopped
+import akka.stream.testkit.scaladsl.StreamTestKit._
 import akka.testkit.DefaultTimeout
 import org.scalatest.concurrent.ScalaFutures
 

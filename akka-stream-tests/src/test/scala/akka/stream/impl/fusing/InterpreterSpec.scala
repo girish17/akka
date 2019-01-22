@@ -1,5 +1,5 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.stream.impl.fusing
@@ -12,7 +12,6 @@ import akka.stream.impl.fusing.GraphStages.SimpleLinearGraphStage
 import akka.util.ConstantFun
 
 class InterpreterSpec extends StreamSpec with GraphInterpreterSpecKit {
-  import Supervision.stoppingDecider
 
   /*
    * These tests were written for the previous version of the interpreter, the so called OneBoundedInterpreter.
@@ -345,8 +344,8 @@ class InterpreterSpec extends StreamSpec with GraphInterpreterSpecKit {
     }
 
     "work with expand-expand" in new OneBoundedSetup[Int](
-      new Expand(Iterator.from),
-      new Expand(Iterator.from)) {
+      new Expand((x: Int) ⇒ Iterator.from(x)),
+      new Expand((x: Int) ⇒ Iterator.from(x))) {
 
       lastEvents() should be(Set(RequestOne))
 
@@ -600,7 +599,7 @@ class InterpreterSpec extends StreamSpec with GraphInterpreterSpecKit {
           push(out, lastElem)
         }
 
-        // note that the default value of lastElem will be always pushed if the upstream closed at the very begining without a pulling
+        // note that the default value of lastElem will be always pushed if the upstream closed at the very beginning without a pulling
         override def onPull(): Unit = {
           if (isClosed(in)) {
             push(out, lastElem)

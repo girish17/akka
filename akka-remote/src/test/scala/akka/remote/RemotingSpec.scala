@@ -1,22 +1,25 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.remote
 
 import akka.actor._
 import akka.event.AddressTerminatedTopic
 import akka.pattern.ask
-import akka.remote.transport.AssociationHandle.{ HandleEventListener, HandleEvent }
+import akka.remote.transport.AssociationHandle.{ HandleEvent, HandleEventListener }
 import akka.remote.transport._
 import akka.remote.transport.Transport.InvalidAssociationException
 import akka.testkit._
 import akka.util.ByteString
 import com.typesafe.config._
 import java.io.NotSerializableException
+
 import scala.concurrent.Await
 import scala.concurrent.Future
 import scala.concurrent.duration._
 import java.util.concurrent.ThreadLocalRandom
+
 import akka.testkit.SocketUtil.temporaryServerAddress
 
 object RemotingSpec {
@@ -35,12 +38,12 @@ object RemotingSpec {
       case x                     ⇒ target = sender(); sender() ! x
     }
 
-    override def preStart() {}
-    override def preRestart(cause: Throwable, msg: Option[Any]) {
+    override def preStart(): Unit = {}
+    override def preRestart(cause: Throwable, msg: Option[Any]): Unit = {
       target ! "preRestart"
     }
-    override def postRestart(cause: Throwable) {}
-    override def postStop() {
+    override def postRestart(cause: Throwable): Unit = {}
+    override def postStop(): Unit = {
       target ! "postStop"
     }
   }
@@ -69,7 +72,6 @@ object RemotingSpec {
       key-password = "changeme"
       trust-store-password = "changeme"
       protocol = "TLSv1.2"
-      random-number-generator = "AES128CounterSecureRNG"
       enabled-algorithms = [TLS_RSA_WITH_AES_128_CBC_SHA]
     }
 
@@ -118,7 +120,7 @@ object RemotingSpec {
     }
   """)
 
-  def muteSystem(system: ActorSystem) {
+  def muteSystem(system: ActorSystem): Unit = {
     system.eventStream.publish(TestEvent.Mute(
       EventFilter.error(start = "AssociationError"),
       EventFilter.warning(start = "AssociationError"),
@@ -149,7 +151,7 @@ class RemotingSpec extends AkkaSpec(RemotingSpec.cfg) with ImplicitSender with D
   def getOtherAddress(sys: ActorSystem, proto: String) =
     sys.asInstanceOf[ExtendedActorSystem].provider.getExternalAddressFor(Address(s"akka.$proto", "", "", 0)).get
   def port(sys: ActorSystem, proto: String) = getOtherAddress(sys, proto).port.get
-  def deploy(sys: ActorSystem, d: Deploy) {
+  def deploy(sys: ActorSystem, d: Deploy): Unit = {
     sys.asInstanceOf[ExtendedActorSystem].provider.asInstanceOf[RemoteActorRefProvider].deployer.deploy(d)
   }
 
@@ -157,7 +159,7 @@ class RemotingSpec extends AkkaSpec(RemotingSpec.cfg) with ImplicitSender with D
 
   val here = system.actorFor("akka.test://remote-sys@localhost:12346/user/echo")
 
-  private def verifySend(msg: Any)(afterSend: ⇒ Unit) {
+  private def verifySend(msg: Any)(afterSend: ⇒ Unit): Unit = {
     val bigBounceId = s"bigBounce-${ThreadLocalRandom.current.nextInt()}"
     val bigBounceOther = remoteSystem.actorOf(Props(new Actor {
       def receive = {
@@ -187,7 +189,7 @@ class RemotingSpec extends AkkaSpec(RemotingSpec.cfg) with ImplicitSender with D
   }
 
   override def atStartup() = {
-    muteSystem(system);
+    muteSystem(system)
     remoteSystem.eventStream.publish(TestEvent.Mute(
       EventFilter[EndpointException](),
       EventFilter.error(start = "AssociationError"),
@@ -198,7 +200,7 @@ class RemotingSpec extends AkkaSpec(RemotingSpec.cfg) with ImplicitSender with D
 
   val maxPayloadBytes = system.settings.config.getBytes("akka.remote.test.maximum-payload-bytes").toInt
 
-  override def afterTermination() {
+  override def afterTermination(): Unit = {
     shutdown(remoteSystem)
     AssociationRegistry.clear()
   }
@@ -633,7 +635,6 @@ class RemotingSpec extends AkkaSpec(RemotingSpec.cfg) with ImplicitSender with D
         akka.remote.enabled-transports = ["akka.remote.test"]
         akka.remote.retry-gate-closed-for = 5s
         akka.remote.log-remote-lifecycle-events = on
-        #akka.loglevel = DEBUG
 
         akka.remote.test {
           registry-key = TRKAzR

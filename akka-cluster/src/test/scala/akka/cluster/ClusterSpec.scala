@@ -1,5 +1,5 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.cluster
@@ -235,7 +235,6 @@ class ClusterSpec extends AkkaSpec(ClusterSpec.config) with ImplicitSender {
         akka.remote.artery.canonical.port = 0
         akka.coordinated-shutdown.terminate-actor-system = on
         akka.cluster.run-coordinated-shutdown-when-down = on
-akka.loglevel=DEBUG
         """))
       try {
         val probe = TestProbe()(sys3)
@@ -245,6 +244,7 @@ akka.loglevel=DEBUG
         probe.expectMsgType[MemberUp]
 
         Cluster(sys3).down(Cluster(sys3).selfAddress)
+        probe.expectMsgType[MemberDowned]
         probe.expectMsgType[MemberRemoved]
         Await.result(sys3.whenTerminated, 10.seconds)
         Cluster(sys3).isTerminated should ===(true)

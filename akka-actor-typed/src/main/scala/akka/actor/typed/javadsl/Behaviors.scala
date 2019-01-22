@@ -1,36 +1,37 @@
-/**
- * Copyright (C) 2017-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2017-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.actor.typed.javadsl
 
+import java.util.Collections
 import java.util.function.{ Function ⇒ JFunction }
 
-import scala.reflect.ClassTag
-import akka.util.OptionVal
-import akka.japi.function.{ Function2 ⇒ JapiFunction2 }
-import akka.japi.function.{ Procedure, Procedure2 }
-import akka.japi.pf.PFBuilder
-import akka.actor.typed.Behavior
-import akka.actor.typed.ExtensibleBehavior
-import akka.actor.typed.Signal
-import akka.actor.typed.ActorRef
-import akka.actor.typed.SupervisorStrategy
-import akka.actor.typed.scaladsl.{ ActorContext ⇒ SAC }
-import akka.actor.typed.internal.{ BehaviorImpl, LoggingBehaviorImpl, Supervisor, TimerSchedulerImpl }
+import akka.actor.typed.{ ActorRef, Behavior, BehaviorInterceptor, Signal, SupervisorStrategy }
+import akka.actor.typed.internal.{ BehaviorImpl, Supervisor, TimerSchedulerImpl, WithMdcBehaviorInterceptor }
+import akka.actor.typed.scaladsl
 import akka.annotation.ApiMayChange
+import akka.japi.function.{ Function2 ⇒ JapiFunction2 }
+import akka.japi.pf.PFBuilder
+import akka.util.unused
+
 import scala.collection.JavaConverters._
+import scala.reflect.ClassTag
+
 /**
  * Factories for [[akka.actor.typed.Behavior]].
  */
 @ApiMayChange
 object Behaviors {
 
-  private val _unitFunction = (_: SAC[Any], _: Any) ⇒ ()
-  private def unitFunction[T] = _unitFunction.asInstanceOf[((SAC[T], Signal) ⇒ Unit)]
+  private[this] val _two2same = new JapiFunction2[ActorContext[Any], Any, Behavior[Any]] {
+    override def apply(context: ActorContext[Any], msg: Any): Behavior[Any] = same
+  }
+  private[this] def two2same[T] = _two2same.asInstanceOf[JapiFunction2[ActorContext[T], T, Behavior[T]]]
 
   /**
    * `setup` is a factory for a behavior. Creation of the behavior instance is deferred until
-   * the actor is started, as opposed to [[Behaviors#immutable]] that creates the behavior instance
+   * the actor is started, as opposed to [[Behaviors#receive]] that creates the behavior instance
    * immediately before the actor is running. The `factory` function pass the `ActorContext`
    * as parameter and that can for example be used for spawning child actors.
    *
@@ -41,55 +42,6 @@ object Behaviors {
    */
   def setup[T](factory: akka.japi.function.Function[ActorContext[T], Behavior[T]]): Behavior[T] =
     Behavior.DeferredBehavior(ctx ⇒ factory.apply(ctx.asJava))
-
-  /**
-   * Factory for creating a [[MutableBehavior]] that typically holds mutable state as
-   * instance variables in the concrete [[MutableBehavior]] implementation class.
-   *
-   * Creation of the behavior instance is deferred, i.e. it is created via the `factory`
-   * function. The reason for the deferred creation is to avoid sharing the same instance in
-   * multiple actors, and to create a new instance when the actor is restarted.
-   *
-   * @param factory
-   *          behavior factory that takes the child actor’s context as argument
-   * @return the deferred behavior
-   */
-  def mutable[T](factory: akka.japi.function.Function[ActorContext[T], MutableBehavior[T]]): Behavior[T] =
-    setup(factory)
-
-  /**
-   * Mutable behavior can be implemented by extending this class and implement the
-   * abstract method [[MutableBehavior#onMessage]] and optionally override
-   * [[MutableBehavior#onSignal]].
-   *
-   * Instances of this behavior should be created via [[Behaviors#mutable]] and if
-   * the [[ActorContext]] is needed it can be passed as a constructor parameter
-   * from the factory function.
-   *
-   * @see [[Behaviors#mutable]]
-   */
-  abstract class MutableBehavior[T] extends ExtensibleBehavior[T] {
-    private var _receive: OptionVal[Receive[T]] = OptionVal.None
-    private def receive: Receive[T] = _receive match {
-      case OptionVal.None ⇒
-        val receive = createReceive
-        _receive = OptionVal.Some(receive)
-        receive
-      case OptionVal.Some(r) ⇒ r
-    }
-
-    @throws(classOf[Exception])
-    override final def receiveMessage(ctx: akka.actor.typed.ActorContext[T], msg: T): Behavior[T] =
-      receive.receiveMessage(msg)
-
-    @throws(classOf[Exception])
-    override final def receiveSignal(ctx: akka.actor.typed.ActorContext[T], msg: Signal): Behavior[T] =
-      receive.receiveSignal(msg)
-
-    def createReceive: Receive[T]
-
-    def receiveBuilder: ReceiveBuilder[T] = ReceiveBuilder.create
-  }
 
   /**
    * Return this behavior from message processing in order to advise the
@@ -146,14 +98,32 @@ object Behaviors {
    * [[ActorContext]] that allows access to the system, spawning and watching
    * other actors, etc.
    *
-   * This constructor is called immutable because the behavior instance doesn't
-   * have or close over any mutable state. Processing the next message
-   * results in a new behavior that can potentially be different from this one.
-   * State is updated by returning a new behavior that holds the new immutable
-   * state.
+   * Compared to using [[AbstractBehavior]] this factory is a more functional style
+   * of defining the `Behavior`. Processing the next message results in a new behavior
+   * that can potentially be different from this one. State is maintained by returning
+   * a new behavior that holds the new immutable state.
    */
-  def immutable[T](onMessage: JapiFunction2[ActorContext[T], T, Behavior[T]]): Behavior[T] =
-    new BehaviorImpl.ImmutableBehavior((ctx, msg) ⇒ onMessage.apply(ctx.asJava, msg))
+  def receive[T](onMessage: JapiFunction2[ActorContext[T], T, Behavior[T]]): Behavior[T] =
+    new BehaviorImpl.ReceiveBehavior((ctx, msg) ⇒ onMessage.apply(ctx.asJava, msg))
+
+  /**
+   * Simplified version of [[receive]] with only a single argument - the message
+   * to be handled. Useful for when the context is already accessible by other means,
+   * like being wrapped in an [[setup]] or similar.
+   *
+   * Construct an actor behavior that can react to incoming messages but not to
+   * lifecycle signals. After spawning this actor from another actor (or as the
+   * guardian of an [[akka.actor.typed.ActorSystem]]) it will be executed within an
+   * [[ActorContext]] that allows access to the system, spawning and watching
+   * other actors, etc.
+   *
+   * Compared to using [[AbstractBehavior]] this factory is a more functional style
+   * of defining the `Behavior`. Processing the next message results in a new behavior
+   * that can potentially be different from this one. State is maintained by returning
+   * a new behavior that holds the new immutable state.
+   */
+  def receiveMessage[T](onMessage: akka.japi.Function[T, Behavior[T]]): Behavior[T] =
+    new BehaviorImpl.ReceiveBehavior((_, msg) ⇒ onMessage.apply(msg))
 
   /**
    * Construct an actor behavior that can react to both incoming messages and
@@ -162,16 +132,15 @@ object Behaviors {
    * [[ActorContext]] that allows access to the system, spawning and watching
    * other actors, etc.
    *
-   * This constructor is called immutable because the behavior instance doesn't
-   * have or close over any mutable state. Processing the next message
-   * results in a new behavior that can potentially be different from this one.
-   * State is updated by returning a new behavior that holds the new immutable
-   * state.
+   * Compared to using [[AbstractBehavior]] this factory is a more functional style
+   * of defining the `Behavior`. Processing the next message results in a new behavior
+   * that can potentially be different from this one. State is maintained by returning
+   * a new behavior that holds the new immutable state.
    */
-  def immutable[T](
+  def receive[T](
     onMessage: JapiFunction2[ActorContext[T], T, Behavior[T]],
     onSignal:  JapiFunction2[ActorContext[T], Signal, Behavior[T]]): Behavior[T] = {
-    new BehaviorImpl.ImmutableBehavior(
+    new BehaviorImpl.ReceiveBehavior(
       (ctx, msg) ⇒ onMessage.apply(ctx.asJava, msg),
       { case (ctx, sig) ⇒ onSignal.apply(ctx.asJava, sig) })
   }
@@ -180,40 +149,32 @@ object Behaviors {
    * Constructs an actor behavior builder that can build a behavior that can react to both
    * incoming messages and lifecycle signals.
    *
-   * This constructor is called immutable because the behavior instance does not
-   * need and in fact should not use (close over) mutable variables, but instead
-   * return a potentially different behavior encapsulating any state changes.
-   * If no change is desired, use {@link #same}.
+   * Compared to using [[AbstractBehavior]] this factory is a more functional style
+   * of defining the `Behavior`. Processing the next message results in a new behavior
+   * that can potentially be different from this one. State is maintained by returning
+   * a new behavior that holds the new immutable state.
    *
    * @param type the supertype of all messages accepted by this behavior
    * @return the behavior builder
    */
-  def immutable[T](`type`: Class[T]): BehaviorBuilder[T] = BehaviorBuilder.create[T]
+  def receive[T](@unused `type`: Class[T]): BehaviorBuilder[T] = BehaviorBuilder.create[T]
 
   /**
    * Construct an actor behavior that can react to lifecycle signals only.
    */
-  def onSignal[T](handler: JapiFunction2[ActorContext[T], Signal, Behavior[T]]): Behavior[T] = {
-    val jSame = new JapiFunction2[ActorContext[T], T, Behavior[T]] {
-      override def apply(ctx: ActorContext[T], msg: T) = same
-    }
-    immutable(jSame, handler)
+  def receiveSignal[T](handler: JapiFunction2[ActorContext[T], Signal, Behavior[T]]): Behavior[T] = {
+    receive(two2same, handler)
   }
 
   /**
-   * This type of Behavior wraps another Behavior while allowing you to perform
-   * some action upon each received message or signal. It is most commonly used
-   * for logging or tracing what a certain Actor does.
+   * Intercept messages and signals for a `behavior` by first passing them to a [[akka.actor.typed.BehaviorInterceptor]]
+   *
+   * When a behavior returns a new behavior as a result of processing a signal or message and that behavior already contains
+   * the same interceptor (defined by the [[akka.actor.typed.BehaviorInterceptor#isSame]] method) only the innermost interceptor
+   * is kept. This is to protect against stack overflow when recursively defining behaviors.
    */
-  def tap[T](
-    onMessage: Procedure2[ActorContext[T], T],
-    onSignal:  Procedure2[ActorContext[T], Signal],
-    behavior:  Behavior[T]): Behavior[T] = {
-    BehaviorImpl.tap(
-      (ctx, msg) ⇒ onMessage.apply(ctx.asJava, msg),
-      (ctx, sig) ⇒ onSignal.apply(ctx.asJava, sig),
-      behavior)
-  }
+  def intercept[O, I](behaviorInterceptor: BehaviorInterceptor[O, I], behavior: Behavior[I]): Behavior[O] =
+    BehaviorImpl.intercept(behaviorInterceptor)(behavior)
 
   /**
    * Behavior decorator that copies all received message to the designated
@@ -221,12 +182,8 @@ object Behaviors {
    * wrapped behavior can evolve (i.e. return different behavior) without needing to be
    * wrapped in a `monitor` call again.
    */
-  def monitor[T](monitor: ActorRef[T], behavior: Behavior[T]): Behavior[T] = {
-    BehaviorImpl.tap(
-      (ctx, msg) ⇒ monitor ! msg,
-      unitFunction,
-      behavior)
-  }
+  def monitor[T](monitor: ActorRef[T], behavior: Behavior[T]): Behavior[T] =
+    scaladsl.Behaviors.monitor(monitor, behavior)
 
   /**
    * Wrap the given behavior such that it is restarted (i.e. reset to its
@@ -245,11 +202,11 @@ object Behaviors {
    * final Behavior[DbCommand] dbConnector = ...
    *
    * final Behavior[DbCommand] dbRestarts =
-   *    Actor.supervise(dbConnector)
+   *    Behaviors.supervise(dbConnector)
    *      .onFailure(SupervisorStrategy.restart) // handle all NonFatal exceptions
    *
    * final Behavior[DbCommand] dbSpecificResumes =
-   *    Actor.supervise(dbConnector)
+   *    Behaviors.supervise(dbConnector)
    *      .onFailure[IndexOutOfBoundsException](SupervisorStrategy.resume) // resume for IndexOutOfBoundsException exceptions
    * }}}
    */
@@ -282,16 +239,19 @@ object Behaviors {
    *
    * Example:
    * {{{
-   * Behavior&lt;String> s = immutable((ctx, msg) -> {
+   * Behavior<String> s = Behaviors.receive((ctx, msg) -> {
    *     System.out.println(msg);
-   *     return same();
+   *     return Behaviors.same();
    *   });
-   * Behavior&lt;Number> n = widened(s, pf -> pf.
+   * Behavior<Number> n = Behaviors.widened(s, pf -> pf.
    *         match(BigInteger.class, i -> "BigInteger(" + i + ")").
    *         match(BigDecimal.class, d -> "BigDecimal(" + d + ")")
    *         // drop all other kinds of Number
    *     );
    * }}}
+   *
+   * Scheduled messages via [[TimerScheduler]] can currently not be used
+   * together with `widen`, see issue #25318.
    *
    * @param behavior
    *          the behavior that will receive the selected messages
@@ -312,23 +272,69 @@ object Behaviors {
   def withTimers[T](factory: akka.japi.function.Function[TimerScheduler[T], Behavior[T]]): Behavior[T] =
     TimerSchedulerImpl.withTimers(timers ⇒ factory.apply(timers))
 
-  trait Receive[T] {
-    def receiveMessage(msg: T): Behavior[T]
-    def receiveSignal(msg: Signal): Behavior[T]
-  }
-
   /**
-   * Provide a MDC ("Mapped Diagnostic Context") for logging from the actor.
+   * Per message MDC (Mapped Diagnostic Context) logging.
    *
-   * @param mdcForMessage Is invoked before each message to setup MDC which is then attachd to each logging statement
-   *                      done for that message through the [[ActorContext.getLog]]. After the message has been processed
-   *                      the MDC is cleared.
-   * @param behavior The behavior that this should be applied to.
+   * @param mdcForMessage Is invoked before each message is handled, allowing to setup MDC, MDC is cleared after
+   *                 each message processing by the inner behavior is done.
+   * @param behavior The actual behavior handling the messages, the MDC is used for the log entries logged through
+   *                 `ActorContext.log`
+   *
+   * See also [[akka.actor.typed.Logger.withMdc]]
    */
   def withMdc[T](
-    `type`:        Class[T],
-    mdcForMessage: akka.japi.function.Function[T, java.util.Map[String, Object]],
-    behavior:      Behavior[T]): Behavior[T] =
-    LoggingBehaviorImpl.withMdc[T](message ⇒ mdcForMessage.apply(message).asScala.toMap, behavior)(ClassTag(`type`))
+    mdcForMessage: akka.japi.function.Function[T, java.util.Map[String, Any]], behavior: Behavior[T]): Behavior[T] =
+    withMdc(Collections.emptyMap[String, Any], mdcForMessage, behavior)
+
+  /**
+   * Static MDC (Mapped Diagnostic Context)
+   *
+   * @param staticMdc This MDC is setup in the logging context for every message
+   * @param behavior The actual behavior handling the messages, the MDC is used for the log entries logged through
+   *                 `ActorContext.log`
+   *
+   * See also [[akka.actor.typed.Logger.withMdc]]
+   */
+  def withMdc[T](staticMdc: java.util.Map[String, Any], behavior: Behavior[T]): Behavior[T] =
+    withMdc(staticMdc, null, behavior)
+
+  /**
+   * Combination of static and per message MDC (Mapped Diagnostic Context).
+   *
+   * Each message will get the static MDC plus the MDC returned for the message. If the same key
+   * are in both the static and the per message MDC the per message one overwrites the static one
+   * in the resulting log entries.
+   *
+   * * The `staticMdc` or `mdcForMessage` may be empty.
+   *
+   * @param staticMdc A static MDC applied for each message
+   * @param mdcForMessage Is invoked before each message is handled, allowing to setup MDC, MDC is cleared after
+   *                 each message processing by the inner behavior is done.
+   * @param behavior The actual behavior handling the messages, the MDC is used for the log entries logged through
+   *                 `ActorContext.log`
+   *
+   * See also [[akka.actor.typed.Logger.withMdc]]
+   */
+  def withMdc[T](
+    staticMdc:     java.util.Map[String, Any],
+    mdcForMessage: akka.japi.function.Function[T, java.util.Map[String, Any]],
+    behavior:      Behavior[T]): Behavior[T] = {
+
+    def asScalaMap(m: java.util.Map[String, Any]): Map[String, Any] = {
+      if (m == null || m.isEmpty) Map.empty[String, Any]
+      else m.asScala.toMap
+    }
+
+    val mdcForMessageFun: T ⇒ Map[String, Any] =
+      if (mdcForMessage == null) Map.empty
+      else {
+        message ⇒ asScalaMap(mdcForMessage.apply(message))
+      }
+
+    WithMdcBehaviorInterceptor[T](
+      asScalaMap(staticMdc),
+      mdcForMessageFun,
+      behavior)
+  }
 
 }

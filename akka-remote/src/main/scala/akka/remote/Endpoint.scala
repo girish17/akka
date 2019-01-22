@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.remote
 
 import akka.actor.OneForOneStrategy
@@ -8,7 +9,7 @@ import akka.actor.SupervisorStrategy._
 import akka.actor.Terminated
 import akka.actor._
 import akka.dispatch.sysmsg.SystemMessage
-import akka.event.{ LogMarker, Logging, LoggingAdapter, MarkerLoggingAdapter }
+import akka.event.{ LogMarker, Logging, MarkerLoggingAdapter }
 import akka.pattern.pipe
 import akka.remote.EndpointManager.{ Link, ResendState, Send }
 import akka.remote.EndpointWriter.{ FlushAndStop, StoppedReading }
@@ -66,19 +67,22 @@ private[remote] class DefaultMessageDispatcher(
     val sender: ActorRef = senderOption.getOrElse(system.deadLetters)
     val originalReceiver = recipient.path
 
-    def msgLog = s"RemoteMessage: [$payload] to [$recipient]<+[$originalReceiver] from [$sender()]"
+    def logMessageReceived(messageType: String): Unit = {
+      if (LogReceive && log.isDebugEnabled)
+        log.debug(s"received $messageType RemoteMessage: [{}] to [{}]<+[{}] from [{}]", payload, recipient, originalReceiver, sender)
+    }
 
     recipient match {
 
       case `remoteDaemon` ⇒
         if (UntrustedMode) log.debug(LogMarker.Security, "dropping daemon message in untrusted mode")
         else {
-          if (LogReceive) log.debug("received daemon message {}", msgLog)
+          logMessageReceived("daemon message")
           remoteDaemon ! payload
         }
 
       case l @ (_: LocalRef | _: RepointableRef) if l.isLocal ⇒
-        if (LogReceive) log.debug("received local message {}", msgLog)
+        logMessageReceived("local message")
         payload match {
           case sel: ActorSelectionMessage ⇒
             if (UntrustedMode && (!TrustedSelectionPaths.contains(sel.elements.mkString("/", "/", "")) ||
@@ -98,7 +102,7 @@ private[remote] class DefaultMessageDispatcher(
         }
 
       case r @ (_: RemoteRef | _: RepointableRef) if !r.isLocal && !UntrustedMode ⇒
-        if (LogReceive) log.debug("received remote-destined message {}", msgLog)
+        logMessageReceived("remote-destined message")
         if (provider.transport.addresses(recipientAddress))
           // if it was originally addressed to us but is in fact remote from our point of view (i.e. remote-deployed)
           r.!(payload)(sender)
@@ -216,7 +220,7 @@ private[remote] class ReliableDeliverySupervisor(
     settings.SysResendTimeout, settings.SysResendTimeout, self, AttemptSysMsgRedelivery)
 
   override val supervisorStrategy = OneForOneStrategy(loggingEnabled = false) {
-    case e @ (_: AssociationProblem) ⇒ Escalate
+    case _: AssociationProblem ⇒ Escalate
     case NonFatal(e) ⇒
       val causedBy = if (e.getCause == null) "" else s"Caused by: [${e.getCause.getMessage}]"
       log.warning(
@@ -355,10 +359,10 @@ private[remote] class ReliableDeliverySupervisor(
         // Resending will be triggered by the incoming GotUid message after the connection finished
         goToActive()
       } else goToIdle()
-    case AttemptSysMsgRedelivery               ⇒ // Ignore
-    case s @ Send(msg: SystemMessage, _, _, _) ⇒ tryBuffer(s.copy(seqOpt = Some(nextSeq())))
-    case s: Send                               ⇒ context.system.deadLetters ! s
-    case EndpointWriter.FlushAndStop           ⇒ context.stop(self)
+    case AttemptSysMsgRedelivery             ⇒ // Ignore
+    case s @ Send(_: SystemMessage, _, _, _) ⇒ tryBuffer(s.copy(seqOpt = Some(nextSeq())))
+    case s: Send                             ⇒ context.system.deadLetters ! s
+    case EndpointWriter.FlushAndStop         ⇒ context.stop(self)
     case EndpointWriter.StopReading(w, replyTo) ⇒
       replyTo ! EndpointWriter.StoppedReading(w)
       sender() ! EndpointWriter.StoppedReading(w)
@@ -552,7 +556,8 @@ private[remote] class EndpointWriter(
   var lastAck: Option[Ack] = None
 
   override val supervisorStrategy = OneForOneStrategy(loggingEnabled = false) {
-    case NonFatal(e) ⇒ publishAndThrow(e, Logging.ErrorLevel)
+    case e: ShutDownAssociation ⇒ publishAndThrow(e, Logging.InfoLevel)
+    case NonFatal(e)            ⇒ publishAndThrow(e, Logging.ErrorLevel)
   }
 
   val provider = RARP(extendedSystem).provider
@@ -777,7 +782,7 @@ private[remote] class EndpointWriter(
   def writeSend(s: Send): Boolean = try {
     handle match {
       case Some(h) ⇒
-        if (provider.remoteSettings.LogSend) {
+        if (provider.remoteSettings.LogSend && log.isDebugEnabled) {
           def msgLog = s"RemoteMessage: [${s.message}] to [${s.recipient}]<+[${s.recipient.path}] from [${s.senderOption.getOrElse(extendedSystem.deadLetters)}]"
           log.debug("sending message {}", msgLog)
         }
@@ -811,6 +816,9 @@ private[remote] class EndpointWriter(
     }
   } catch {
     case e: NotSerializableException ⇒
+      log.error(e, "Serializer not defined for message type [{}]. Transient association error (association remains live)", s.message.getClass)
+      true
+    case e: IllegalArgumentException ⇒
       log.error(e, "Serializer not defined for message type [{}]. Transient association error (association remains live)", s.message.getClass)
       true
     case e: MessageSerializer.SerializationException ⇒
@@ -895,7 +903,7 @@ private[remote] class EndpointWriter(
   private def serializeMessage(msg: Any): SerializedMessage = handle match {
     case Some(h) ⇒
       Serialization.currentTransportInformation.withValue(Serialization.Information(h.localAddress, extendedSystem)) {
-        (MessageSerializer.serialize(extendedSystem, msg.asInstanceOf[AnyRef]))
+        MessageSerializer.serialize(extendedSystem, msg.asInstanceOf[AnyRef])
       }
     case None ⇒
       throw new EndpointException("Internal error: No handle was present during serialization of outbound message.")
@@ -990,14 +998,8 @@ private[remote] class EndpointReader(
           } else try
             msgDispatch.dispatch(msg.recipient, msg.recipientAddress, msg.serializedMessage, msg.senderOption)
           catch {
-            case e: NotSerializableException ⇒
-              val sm = msg.serializedMessage
-              log.warning(
-                "Serializer not defined for message with serializer id [{}] and manifest [{}]. " +
-                  "Transient association error (association remains live). {}",
-                sm.getSerializerId,
-                if (sm.hasMessageManifest) sm.getMessageManifest.toStringUtf8 else "",
-                e.getMessage)
+            case e: NotSerializableException ⇒ logTransientSerializationError(msg, e)
+            case e: IllegalArgumentException ⇒ logTransientSerializationError(msg, e)
           }
 
         case None ⇒
@@ -1016,15 +1018,36 @@ private[remote] class EndpointReader(
 
   }
 
+  private def logTransientSerializationError(msg: AkkaPduCodec.Message, error: Exception): Unit = {
+    val sm = msg.serializedMessage
+    log.warning(
+      "Serializer not defined for message with serializer id [{}] and manifest [{}]. " +
+        "Transient association error (association remains live). {}",
+      sm.getSerializerId,
+      if (sm.hasMessageManifest) sm.getMessageManifest.toStringUtf8 else "",
+      error.getMessage)
+  }
+
   def notReading: Receive = {
     case Disassociated(info) ⇒ handleDisassociated(info)
 
     case StopReading(writer, replyTo) ⇒
       replyTo ! StoppedReading(writer)
 
-    case InboundPayload(p) ⇒
-      val (ackOption, _) = tryDecodeMessageAndAck(p)
+    case InboundPayload(p) if p.size <= transport.maximumPayloadBytes ⇒
+      val (ackOption, msgOption) = tryDecodeMessageAndAck(p)
       for (ack ← ackOption; reliableDelivery ← reliableDeliverySupervisor) reliableDelivery ! ack
+
+      if (log.isWarningEnabled)
+        log.warning("Discarding inbound message to [{}] in read-only association to [{}]. " +
+          "If this happens often you may consider using akka.remote.use-passive-connections=off " +
+          "or use Artery TCP.", msgOption.map(_.recipient).getOrElse("unknown"), remoteAddress)
+
+    case InboundPayload(oversized) ⇒
+      log.error(
+        new OversizedPayloadException(s"Discarding oversized payload received in read-only association: " +
+          s"max allowed size [${transport.maximumPayloadBytes}] bytes, actual size [${oversized.size}] bytes."),
+        "Transient error while reading from association (association remains live)")
 
     case _ ⇒
   }

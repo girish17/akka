@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.remote
 
 import akka.actor.Terminated
@@ -9,8 +10,7 @@ import language.postfixOps
 import akka.actor.Actor
 import akka.actor.ActorRef
 import akka.actor.Props
-import testkit.{ STMultiNodeSpec, MultiNodeConfig, MultiNodeSpec }
-import akka.testkit._
+import testkit.MultiNodeConfig
 import com.typesafe.config.ConfigFactory
 import scala.concurrent.duration._
 

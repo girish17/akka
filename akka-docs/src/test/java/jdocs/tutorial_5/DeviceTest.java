@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package jdocs.tutorial_5;
 
 import java.util.Optional;
@@ -47,10 +48,10 @@ public class DeviceTest extends JUnitSuite {
     ActorRef deviceActor = system.actorOf(Device.props("group", "device"));
 
     deviceActor.tell(new DeviceManager.RequestTrackDevice("wrongGroup", "device"), probe.getRef());
-    probe.expectNoMsg();
+    probe.expectNoMessage();
 
     deviceActor.tell(new DeviceManager.RequestTrackDevice("group", "wrongDevice"), probe.getRef());
-    probe.expectNoMsg();
+    probe.expectNoMessage();
   }
 
   @Test
@@ -84,5 +85,4 @@ public class DeviceTest extends JUnitSuite {
     assertEquals(4L, response2.requestId);
     assertEquals(Optional.of(55.0), response2.value);
   }
-
 }

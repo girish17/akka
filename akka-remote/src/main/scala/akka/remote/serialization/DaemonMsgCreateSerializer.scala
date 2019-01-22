@@ -1,20 +1,22 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.remote.serialization
 
+import scala.collection.immutable
+
 import akka.serialization.{ BaseSerializer, SerializationExtension, SerializerWithStringManifest }
 import akka.protobuf.ByteString
-import com.typesafe.config.{ Config, ConfigFactory }
 import akka.actor.{ Deploy, ExtendedActorSystem, NoScopeGiven, Props, Scope }
 import akka.remote.DaemonMsgCreate
-import akka.remote.WireFormats.{ DaemonMsgCreateData, DeployData, PropsData, SerializedMessage }
+import akka.remote.WireFormats.{ DaemonMsgCreateData, DeployData, PropsData }
 import akka.routing.{ NoRouter, RouterConfig }
+import com.typesafe.config.{ Config, ConfigFactory }
+import akka.util.ccompat._
 
 import scala.reflect.ClassTag
 import util.{ Failure, Success }
-import java.io.Serializable
 
 /**
  * Serializes Akka's internal DaemonMsgCreate using protobuf
@@ -165,8 +167,8 @@ private[akka] final class DaemonMsgCreateSerializer(val system: ExtendedActorSys
         } else {
           // message from an older node, which only provides data and class name
           // and never any serializer ids
-          (proto.getProps.getArgsList.asScala zip proto.getProps.getManifestsList.asScala)
-            .map(oldDeserialize)(collection.breakOut)
+          (proto.getProps.getArgsList.asScala zip proto.getProps.getManifestsList.asScala).iterator
+            .map(oldDeserialize).to(immutable.Vector)
         }
       Props(deploy(proto.getProps.getDeploy), actorClass, args)
     }
@@ -178,34 +180,29 @@ private[akka] final class DaemonMsgCreateSerializer(val system: ExtendedActorSys
       supervisor = deserializeActorRef(system, proto.getSupervisor))
   }
 
-  private def oldSerialize(any: Any): ByteString = ByteString.copyFrom(serialization.serialize(any.asInstanceOf[AnyRef]).get)
-
   private def serialize(any: Any): (Int, Boolean, String, Array[Byte]) = {
     val m = any.asInstanceOf[AnyRef]
     val serializer = serialization.findSerializerFor(m)
 
     // this trixery is to retain backwards wire compatibility while at the same time
     // allowing for usage of serializers with string manifests
-    var hasManifest = false
+    val hasManifest = serializer.includeManifest
     val manifest = serializer match {
       case ser: SerializerWithStringManifest ⇒
-        hasManifest = true
         ser.manifest(m)
-      case ser ⇒
-        hasManifest = ser.includeManifest
-
+      case _ ⇒
         // we do include class name regardless to retain wire compatibility
         // with older nodes who expect manifest to be the class name
         if (m eq null) {
           "null"
         } else {
           val className = m.getClass.getName
-          if (scala212OrLater && m.isInstanceOf[Serializable] && m.getClass.isSynthetic && className.contains("$Lambda$")) {
+          if (scala212OrLater && m.isInstanceOf[java.io.Serializable] && m.getClass.isSynthetic && className.contains("$Lambda$")) {
             // When the additional-protobuf serializers are not enabled
             // the serialization of the parameters is based on passing class name instead of
             // serializerId and manifest as we usually do. With Scala 2.12 the functions are generated as
             // lambdas and we can't use that load class from that name when deserializing
-            classOf[Serializable].getName
+            classOf[java.io.Serializable].getName
           } else {
             className
           }

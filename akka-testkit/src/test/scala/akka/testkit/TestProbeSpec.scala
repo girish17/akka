@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2018-2019 Lightbend Inc. <https://www.lightbend.com>
+ */
+
 package akka.testkit
 
 import language.postfixOps
@@ -75,7 +79,7 @@ class TestProbeSpec extends AkkaSpec with DefaultTimeout with Eventually {
       }
     }
 
-    def assertFailureMessageContains(expectedHint: String)(block: ⇒ Unit) {
+    def assertFailureMessageContains(expectedHint: String)(block: ⇒ Unit): Unit = {
       Try {
         block
       } match {

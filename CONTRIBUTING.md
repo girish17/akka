@@ -152,6 +152,13 @@ multi-jvm:testOnly akka.cluster.SunnyWeather
 Akka has not been compiled or tested with `-optimize` Scala compiler flag. (In sbt, you can specify compiler options in the `scalacOptions` key.)
 Strange behavior has been reported by users that have tried it.
 
+### Compiling with Graal JIT
+
+Akka, like most Scala projects, compiles faster with the Graal JIT enabled. The easiest way to use it for compiling Akka is to:
+
+* Use a JDK > 10
+* Use the following JVM options for SBT e.g. by adding them to the `SBT_OPTS` environment variable: `-XX:+UnlockExperimentalVMOptions -XX:+EnableJVMCI -XX:+UseJVMCICompiler`
+
 ## The `validatePullRequest` task
 
 The Akka build includes a special task called `validatePullRequest` which investigates the changes made as well as dirty
@@ -178,6 +185,7 @@ PR_TARGET_BRANCH=origin/example sbt validatePullRequest
 ```
 
 ## Binary compatibility
+
 Binary compatibility rules and guarantees are described in depth in the [Binary Compatibility Rules
 ](http://doc.akka.io/docs/akka/snapshot/common/binary-compatibility-rules.html) section of the documentation.
 
@@ -199,6 +207,8 @@ Situations when it may be fine to ignore a MiMa issued warning include:
 - if it is concerning internal classes (often recognisable by package names like `dungeon`, `impl`, `internal` etc.)
 - if it is adding API to classes / traits which are only meant for extension by Akka itself, i.e. should not be extended by end-users
 - other tricky situations
+
+The binary compatibility of the current changes can be checked by running `sbt +mimaReportBinaryIssues`.
 
 ## Pull request requirements
 
@@ -382,16 +392,114 @@ tested it becomes an officially supported Akka feature.
 
 [List of Akka features marked as may change](http://doc.akka.io/docs/akka/current/common/may-change.html)
 
+## Java APIs in Akka
+
+Akka, aims to keep 100% feature parity between the Java and Scala. Implementing even the API for Java in 
+Scala has proven the most viable way to do it, as long as you keep the following in mind:
+
+1. Keep entry points separated in `javadsl` and `scaladsl` unless changing existing APIs which for historical 
+   and binary compatibility reasons do not have this subdivision.
+   
+1. Have methods in the `javadsl` package delegate to the methods in the Scala API, or the common internal implementation. 
+   The Akka Stream Scala instances for example have a `.asJava` method to convert to the `akka.stream.javadsl` counterparts.
+   
+1. When using Scala `object` instances, offer a `getInstance()` method and add a sealed abstract class 
+   (to support Scala 2.11) to get the return type. See `akka.Done` for an example.
+   
+1. When the Scala API contains an `apply` method, use `create` or `of` for Java users.
+
+1. Do not nest Scala `object`s more than two levels. 
+   
+1. Do not define traits nested in other classes or in objects deeper than one level.
+
+1. Be careful to convert values within data structures (eg. for `scala.Long` vs. `java.lang.Long`, use `scala.Long.box(value)`)
+
+1. When compiling with both Scala 2.11 and 2.12, some methods considered overloads in 2.11, become ambiguous in 
+   2.12 as both may be functional interfaces.
+
+1. Complement any methods with Scala collections with a Java collection version
+
+1. Use the `akka.japi.Pair` class to return tuples
+
+1. If the underlying Scala code requires an `ExecutionContext`, make the Java API take an `Executor` and use 
+   `ExecutionContext.fromExecutor(executor)` for conversion.
+
+1. Make use of `scala-java8-compat` conversions, see [GitHub](https://github.com/scala/scala-java8-compat) 
+   (eg. `scala.compat.java8.FutureConverters` to translate Futures to `CompletionStage`s).
+   Note that we cannot upgrade to a newer version scala-java8-compat because of binary compatibility issues. 
+
+1. Make sure there are Java tests or sample code touching all parts of the API
+
+1. Do not use lower type bounds: `trait[T] { def method[U >: Something]: U }` as they do not work with Java
+
+1. Provide `getX` style accessors for values in the Java APIs
+
+1. Place classes not part of the public APIs in a shared `internal` package. This package can contain implementations of 
+   both Java and Scala APIs. Make such classes `private[akka]` and also, since that becomes `public` from Java's point of
+   view, annotate with `@InternalApi` and add a scaladoc saying `INTERNAL API`
+   
+1. Companion objects (in Scala 2.11) cannot be accessed from Java if their companion is a trait, use an `abstract class` instead 
+   
+1. Traits that are part of the Java API should only be used to define pure interfaces, as soon as there are implementations of methods, prefer 
+   `abstract class`.
+      
+1. Any method definition in a class that will be part of the Java API should not use any default parameters, as they will show up ugly when using them from Java, use plain old method overloading instead.
+   
+
+### Overview of Scala types and their Java counterparts
+
+| Scala | Java |
+|-------|------|
+| `scala.Option[T]` | `java.util.Optional<T>` (`OptionalDouble`, ...) |
+| `scala.collection.immutable.Seq[T]` | `java.util.List<T>` |
+| `scala.concurrent.Future[T]` | `java.util.concurrent.CompletionStage<T>` |
+| `scala.concurrent.Promise[T]` | `java.util.concurrent.CompletableFuture<T>` |
+| `scala.concurrent.duration.FiniteDuration` | `java.time.Duration` (use `akka.util.JavaDurationConverters`) |
+| `T => Unit` | `java.util.function.Consumer<T>` |
+| `() => R` (`scala.Function0[R]`) | `java.util.function.Supplier<R>` |
+| `T => R` (`scala.Function1[T, R]`) | `java.util.function.Function<T, R>` |
+
+
+
+## Contributing new Akka Streams operators
+
+Documentation of Akka Streams operators is automatically enforced.
+If a method exists on Source / Sink / Flow, or any other class listed in `project/StreamOperatorsIndexGenerator.scala`,
+it must also have a corresponding documentation page under `akka-docs/src/main/paradox/streams/operators/...`.
+
+The pages structure is well-defined, and must be the same on all documentation pages, please refer to any neighbouring
+docs pages in there to see the pattern in action. In general though the page must consist of:
+
+- the title, including where the operator is defined (e.g. `ActorFlow.ask` or `Source.map`)
+- a short explanation of what this operator does, 1 sentence is optimal
+- an image explaining the operator more visually (whenever possible)
+- a link to the operators' "category" (these are listed in `akka-docs/src/main/paradox/categories`)
+- the method signature snippet (use the built in directives to generate it)
+- a longer explanation about the operator and it's exact semantics (when it pulls, cancels, signals elements)
+- at least one usage example
+
+Using this structure, the surrounding infrastructure will **generate the index pages**, so you do not need to maintain
+the index or category pages manually.
+
+### Adding new top-level objects/classes containing operators
+
+In case you are adding not only a new operator, but also a new class/object, you need to add it to the 
+`project/StreamOperatorsIndexGenerator.scala` so it can be included in the automatic docs generation and enforcing the 
+existence of those docs.
+
 # Supporting infrastructure
 
 ## Continuous integration
 
-Each project should be configured to use a continuous integration (CI) tool (i.e. a build server à la Jenkins). 
+Akka currently uses a combination of Jenkins and Travis for Continuous Integration:
 
-Lightbend is sponsoring a [Jenkins server farm](https://jenkins.akka.io/), sometimes referred to as "the Lausanne cluster".
+* Jenkins [runs the tests for each PR](https://jenkins.akka.io:8498/job/pr-validator-per-commit-jenkins/)
+* Jenkins [runs a nightly test suite](https://jenkins.akka.io:8498/view/Nightly%20Jobs/job/akka-nightly/)
+* Travis [checks dependency licenses for all PR's](https://travis-ci.org/akka/akka)
+
+The [Jenkins server farm](https://jenkins.akka.io/), sometimes referred to as "the Lausanne cluster", is sponsored by Lightbend.
+
 The cluster is made out of real bare-metal boxes, and maintained by the Akka team (and other very helpful people at Lightbend).
-
-In addition to PR validation the cluster is also used for nightly and performance test runs. 
 
 ## Related links
 

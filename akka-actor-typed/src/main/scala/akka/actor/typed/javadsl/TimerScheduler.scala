@@ -1,13 +1,14 @@
-/**
- * Copyright (C) 2017-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2017-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.actor.typed.javadsl
 
-import scala.concurrent.duration.FiniteDuration
+import java.time.Duration
 
 /**
  * Support for scheduled `self` messages in an actor.
- * It is used with `Actor.withTimers`, which also takes care of the
+ * It is used with `Behaviors.withTimers`, which also takes care of the
  * lifecycle of the timers such as cancelling them when the actor
  * is restarted or stopped.
  *
@@ -25,18 +26,18 @@ trait TimerScheduler[T] {
    * previous timer is not received, even though it might already be enqueued
    * in the mailbox when the new timer is started.
    */
-  def startPeriodicTimer(key: Any, msg: T, interval: FiniteDuration): Unit
+  def startPeriodicTimer(key: Any, msg: T, interval: Duration): Unit
 
   /**
    * * Start a timer that will send `msg` once to the `self` actor after
-   * the given `timeout`.
+   * the given `delay`.
    *
    * Each timer has a key and if a new timer with same key is started
    * the previous is cancelled and it's guaranteed that a message from the
    * previous timer is not received, even though it might already be enqueued
    * in the mailbox when the new timer is started.
    */
-  def startSingleTimer(key: Any, msg: T, timeout: FiniteDuration): Unit
+  def startSingleTimer(key: Any, msg: T, delay: Duration): Unit
 
   /**
    * Check if a timer with a given `key` is active.

@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.cluster
 
 import akka.actor._
@@ -13,7 +14,6 @@ import com.typesafe.config.ConfigFactory
 
 import scala.collection.immutable
 import scala.concurrent.duration._
-import scala.language.postfixOps
 
 object NodeChurnMultiJvmSpec extends MultiNodeConfig {
   val first = role("first")

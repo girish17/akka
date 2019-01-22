@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2016-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2016-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.remote.artery
 package aeron
 
@@ -25,7 +26,6 @@ import akka.stream.ActorMaterializer
 import akka.stream.KillSwitches
 import akka.stream.ThrottleMode
 import akka.stream.scaladsl.Flow
-import akka.stream.scaladsl.Keep
 import akka.stream.scaladsl.Source
 import akka.testkit._
 import akka.util.ByteString

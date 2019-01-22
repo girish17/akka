@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.testkit.metrics
 
 import com.codahale.metrics._
@@ -57,7 +58,7 @@ private[akka] trait MetricsKitOps extends MetricKeyDSL {
   def forceGcEnabled: Boolean = true
 
   /** Yet another delegate to `System.gc()` */
-  def gc() {
+  def gc(): Unit = {
     if (forceGcEnabled)
       System.gc()
   }

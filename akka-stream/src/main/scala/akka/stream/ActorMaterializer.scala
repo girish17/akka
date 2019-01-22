@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2014-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2014-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.stream
 
 import java.util.concurrent.TimeUnit
@@ -66,17 +67,16 @@ object ActorMaterializer {
       FlowNames(system).name.copy(namePrefix))
   }
 
-  private def actorOfStreamSupervisor(materializerSettings: ActorMaterializerSettings, context: ActorRefFactory, haveShutDown: AtomicBoolean) =
+  private def actorOfStreamSupervisor(materializerSettings: ActorMaterializerSettings, context: ActorRefFactory, haveShutDown: AtomicBoolean) = {
+    val props = StreamSupervisor.props(materializerSettings, haveShutDown)
     context match {
-      case s: ExtendedActorSystem ⇒
-        s.systemActorOf(StreamSupervisor.props(materializerSettings, haveShutDown).withDispatcher(materializerSettings.dispatcher), StreamSupervisor.nextName())
-
-      case a: ActorContext ⇒
-        a.actorOf(StreamSupervisor.props(materializerSettings, haveShutDown).withDispatcher(materializerSettings.dispatcher), StreamSupervisor.nextName())
+      case s: ExtendedActorSystem ⇒ s.systemActorOf(props, StreamSupervisor.nextName())
+      case a: ActorContext        ⇒ a.actorOf(props, StreamSupervisor.nextName())
     }
+  }
 
   /**
-   * Scala API: * Scala API: Creates an ActorMaterializer that can materialize stream blueprints as running streams.
+   * Scala API: Creates an ActorMaterializer that can materialize stream blueprints as running streams.
    *
    * The required [[akka.actor.ActorRefFactory]]
    * (which can be either an [[akka.actor.ActorSystem]] or an [[akka.actor.ActorContext]])
@@ -100,8 +100,9 @@ object ActorMaterializer {
       system,
       materializerSettings,
       system.dispatchers,
-      system.systemActorOf(StreamSupervisor.props(materializerSettings, haveShutDown)
-        .withDispatcher(materializerSettings.dispatcher), StreamSupervisor.nextName()),
+      system.systemActorOf(
+        StreamSupervisor.props(materializerSettings, haveShutDown),
+        StreamSupervisor.nextName()),
       haveShutDown,
       FlowNames(system).name.copy(namePrefix))
   }
@@ -181,8 +182,8 @@ abstract class ActorMaterializer extends Materializer with MaterializerLoggingPr
   def settings: ActorMaterializerSettings
 
   /**
-   * Shuts down this materializer and all the stages that have been materialized through this materializer. After
-   * having shut down, this materializer cannot be used again. Any attempt to materialize stages after having
+   * Shuts down this materializer and all the operators that have been materialized through this materializer. After
+   * having shut down, this materializer cannot be used again. Any attempt to materialize operators after having
    * shut down will result in an IllegalStateException being thrown at materialization time.
    */
   def shutdown(): Unit
@@ -229,7 +230,7 @@ final case class AbruptTerminationException(actor: ActorRef)
   extends RuntimeException(s"Processor actor [$actor] terminated abruptly") with NoStackTrace
 
 /**
- * Signal that the stage was abruptly terminated, usually seen as a call to `postStop` of the `GraphStageLogic` without
+ * Signal that the operator was abruptly terminated, usually seen as a call to `postStop` of the `GraphStageLogic` without
  * any of the handler callbacks seeing completion or failure from upstream or cancellation from downstream. This can happen when
  * the actor running the graph is killed, which happens when the materializer or actor system is terminated.
  */
@@ -255,13 +256,13 @@ object ActorMaterializerSettings {
     fuzzingMode:                 Boolean,
     autoFusing:                  Boolean,
     maxFixedBufferSize:          Int) = {
-    // these sins were comitted in the name of bin comp:
+    // these sins were committed in the name of bin comp:
     val config = ConfigFactory.defaultReference
     new ActorMaterializerSettings(
       initialInputBufferSize, maxInputBufferSize, dispatcher, supervisionDecider, subscriptionTimeoutSettings, debugLogging,
       outputBurstLimit, fuzzingMode, autoFusing, maxFixedBufferSize, 1000, IOSettings(tcpWriteBufferSize = 16 * 1024),
       StreamRefSettings(config.getConfig("akka.stream.materializer.stream-ref")),
-      config.getString("akka.stream.blocking-io-dispatcher")
+      config.getString(ActorAttributes.IODispatcher.dispatcher)
     )
   }
 
@@ -307,13 +308,13 @@ object ActorMaterializerSettings {
     fuzzingMode:                 Boolean,
     autoFusing:                  Boolean,
     maxFixedBufferSize:          Int) = {
-    // these sins were comitted in the name of bin comp:
+    // these sins were committed in the name of bin comp:
     val config = ConfigFactory.defaultReference
     new ActorMaterializerSettings(
       initialInputBufferSize, maxInputBufferSize, dispatcher, supervisionDecider, subscriptionTimeoutSettings, debugLogging,
       outputBurstLimit, fuzzingMode, autoFusing, maxFixedBufferSize, 1000, IOSettings(tcpWriteBufferSize = 16 * 1024),
       StreamRefSettings(config.getConfig("akka.stream.materializer.stream-ref")),
-      config.getString("akka.stream.blocking-io-dispatcher"))
+      config.getString(ActorAttributes.IODispatcher.dispatcher))
   }
 
   /**
@@ -383,7 +384,7 @@ final class ActorMaterializerSettings @InternalApi private (
     this(initialInputBufferSize, maxInputBufferSize, dispatcher, supervisionDecider, subscriptionTimeoutSettings, debugLogging,
       outputBurstLimit, fuzzingMode, autoFusing, maxFixedBufferSize, syncProcessingLimit, ioSettings,
       StreamRefSettings(ConfigFactory.defaultReference().getConfig("akka.stream.materializer.stream-ref")),
-      ConfigFactory.defaultReference().getString("akka.stream.blocking-io-dispatcher")
+      ConfigFactory.defaultReference().getString(ActorAttributes.IODispatcher.dispatcher)
     )
 
   // backwards compatibility when added IOSettings, shouldn't be needed since private, but added to satisfy mima
@@ -404,7 +405,7 @@ final class ActorMaterializerSettings @InternalApi private (
     this(initialInputBufferSize, maxInputBufferSize, dispatcher, supervisionDecider, subscriptionTimeoutSettings, debugLogging,
       outputBurstLimit, fuzzingMode, autoFusing, maxFixedBufferSize, syncProcessingLimit,
       IOSettings(tcpWriteBufferSize = 16 * 1024), StreamRefSettings(ConfigFactory.defaultReference().getConfig("akka.stream.materializer.stream-ref")),
-      ConfigFactory.defaultReference().getString("akka.stream.blocking-io-dispatcher")
+      ConfigFactory.defaultReference().getString(ActorAttributes.IODispatcher.dispatcher)
     )
 
   // backwards compatibility when added IOSettings, shouldn't be needed since private, but added to satisfy mima
@@ -424,7 +425,7 @@ final class ActorMaterializerSettings @InternalApi private (
     this(initialInputBufferSize, maxInputBufferSize, dispatcher, supervisionDecider, subscriptionTimeoutSettings, debugLogging,
       outputBurstLimit, fuzzingMode, autoFusing, maxFixedBufferSize, 1000, IOSettings(tcpWriteBufferSize = 16 * 1024),
       StreamRefSettings(ConfigFactory.defaultReference().getConfig("akka.stream.materializer.stream-ref")),
-      ConfigFactory.defaultReference().getString("akka.stream.blocking-io-dispatcher")
+      ConfigFactory.defaultReference().getString(ActorAttributes.IODispatcher.dispatcher)
     )
 
   private def copy(
@@ -477,8 +478,8 @@ final class ActorMaterializerSettings @InternalApi private (
    * overridden for specific flows of the stream operations with
    * [[akka.stream.Attributes#supervisionStrategy]].
    *
-   * Note that supervision in streams are implemented on a per stage basis and is not supported
-   * by every stage.
+   * Note that supervision in streams are implemented on a per operator basis and is not supported
+   * by every operator.
    */
   def withSupervisionStrategy(decider: Supervision.Decider): ActorMaterializerSettings = {
     if (decider eq this.supervisionDecider) this
@@ -490,8 +491,8 @@ final class ActorMaterializerSettings @InternalApi private (
    * overridden for specific flows of the stream operations with
    * [[akka.stream.Attributes#supervisionStrategy]].
    *
-   * Note that supervision in streams are implemented on a per stage basis and is not supported
-   * by every stage.
+   * Note that supervision in streams are implemented on a per operator basis and is not supported
+   * by every operator.
    */
   def withSupervisionStrategy(decider: function.Function[Throwable, Supervision.Directive]): ActorMaterializerSettings = {
     import Supervision._

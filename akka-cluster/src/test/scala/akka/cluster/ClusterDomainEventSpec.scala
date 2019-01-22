@@ -1,5 +1,5 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.cluster
@@ -37,7 +37,7 @@ class ClusterDomainEventSpec extends WordSpec with Matchers {
   val selfDummyAddress = UniqueAddress(Address("akka.tcp", "sys", "selfDummy", 2552), 17L)
 
   private[cluster] def converge(gossip: Gossip): (Gossip, Set[UniqueAddress]) =
-    ((gossip, Set.empty[UniqueAddress]) /: gossip.members) { case ((gs, as), m) ⇒ (gs.seen(m.uniqueAddress), as + m.uniqueAddress) }
+    gossip.members.foldLeft((gossip, Set.empty[UniqueAddress])) { case ((gs, as), m) ⇒ (gs.seen(m.uniqueAddress), as + m.uniqueAddress) }
 
   private def state(g: Gossip): MembershipState =
     state(g, selfDummyAddress)
@@ -169,6 +169,14 @@ class ClusterDomainEventSpec extends WordSpec with Matchers {
       diffReachable(
         state(g1, bUp.uniqueAddress),
         state(g2, bUp.uniqueAddress)) should ===(Seq())
+    }
+
+    "be produced for downed members" in {
+      val (g1, _) = converge(Gossip(members = SortedSet(aUp, eUp)))
+      val (g2, _) = converge(Gossip(members = SortedSet(aUp, eDown)))
+
+      diffMemberEvents(state(g1), state(g2)) should ===(Seq(MemberDowned(eDown)))
+      diffUnreachable(state(g1), state(g2)) should ===(Seq.empty)
     }
 
     "be produced for removed members" in {

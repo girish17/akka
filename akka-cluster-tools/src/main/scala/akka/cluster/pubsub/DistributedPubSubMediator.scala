@@ -1,5 +1,5 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.cluster.pubsub
@@ -569,8 +569,8 @@ class DistributedPubSubMediator(settings: DistributedPubSubSettings) extends Act
         case _ ⇒
           (for {
             (_, bucket) ← registry
-            valueHolder ← bucket.content.get(path)
-            routee ← valueHolder.routee
+            valueHolder ← bucket.content.get(path).toSeq
+            routee ← valueHolder.routee.toSeq
           } yield routee).toVector
       }
 
@@ -707,6 +707,12 @@ class DistributedPubSubMediator(settings: DistributedPubSubSettings) extends Act
         registry -= m.address
       }
 
+    case MemberDowned(m) ⇒
+      if (matchingRole(m)) {
+        nodes -= m.address
+        registry -= m.address
+      }
+
     case MemberRemoved(m, _) ⇒
       if (m.address == selfAddress)
         context stop self
@@ -745,8 +751,8 @@ class DistributedPubSubMediator(settings: DistributedPubSubSettings) extends Act
     val refs = for {
       (address, bucket) ← registry
       if !(allButSelf && address == selfAddress) // if we should skip sender() node and current address == self address => skip
-      valueHolder ← bucket.content.get(path)
-      ref ← valueHolder.ref
+      valueHolder ← bucket.content.get(path).toSeq
+      ref ← valueHolder.ref.toSeq
     } yield ref
     if (refs.isEmpty) ignoreOrSendToDeadLetters(msg)
     else refs.foreach(_.forward(msg))
@@ -787,7 +793,7 @@ class DistributedPubSubMediator(settings: DistributedPubSubSettings) extends Act
     val topicPrefix = self.path.toStringWithoutAddress
     (for {
       (_, bucket) ← registry
-      (key, value) ← bucket.content
+      (key, value) ← bucket.content.toSeq
       if key.startsWith(topicPrefix)
       topic = key.substring(topicPrefix.length + 1)
       if !topic.contains('/') // exclude group topics

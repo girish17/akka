@@ -1,10 +1,10 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.remote
 
 import akka.event.Logging.Warning
-import akka.event.jul.Logger
 import akka.remote.FailureDetector.Clock
 import java.util.concurrent.atomic.AtomicReference
 import scala.annotation.tailrec
@@ -104,6 +104,9 @@ class PhiAccrualFailureDetector(
 
   private val acceptableHeartbeatPauseMillis = acceptableHeartbeatPause.toMillis
 
+  // address below was introduced as a var because of binary compatibility constraints
+  private[akka] var address: String = "N/A"
+
   /**
    * Implement using optimistic lockless concurrency, all state is represented
    * by this immutable case class and managed by an AtomicReference.
@@ -134,8 +137,8 @@ class PhiAccrualFailureDetector(
         val interval = timestamp - latestTimestamp
         // don't use the first heartbeat after failure for the history, since a long pause will skew the stats
         if (isAvailable(timestamp)) {
-          if (interval >= (acceptableHeartbeatPauseMillis / 2) && eventStream.isDefined)
-            eventStream.get.publish(Warning(this.toString, getClass, s"heartbeat interval is growing too large: $interval millis"))
+          if (interval >= (acceptableHeartbeatPauseMillis / 3 * 2) && eventStream.isDefined)
+            eventStream.get.publish(Warning(this.toString, getClass, s"heartbeat interval is growing too large for address $address: $interval millis"))
           oldState.history :+ interval
         } else oldState.history
     }

@@ -1,5 +1,5 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.cluster.metrics.protobuf
@@ -11,11 +11,13 @@ import java.{ lang ⇒ jl }
 import akka.actor.{ Address, ExtendedActorSystem }
 import akka.cluster.metrics.protobuf.msg.{ ClusterMetricsMessages ⇒ cm }
 import akka.cluster.metrics._
-import akka.serialization.{ BaseSerializer, SerializationExtension, SerializerWithStringManifest }
+import akka.serialization.{ BaseSerializer, SerializationExtension, Serializers, SerializerWithStringManifest }
 import akka.util.ClassLoaderObjectInputStream
 import akka.protobuf.{ ByteString, MessageLite }
+import akka.util.ccompat._
 
 import scala.annotation.tailrec
+import scala.collection.immutable
 import scala.collection.JavaConverters.{ asJavaIterableConverter, asScalaBufferConverter, setAsJavaSetConverter }
 import java.io.NotSerializableException
 
@@ -122,16 +124,9 @@ class MessageSerializer(val system: ExtendedActorSystem) extends SerializerWithS
     builder.setData(ByteString.copyFrom(serializer.toBinary(selector)))
       .setSerializerId(serializer.identifier)
 
-    serializer match {
-      case ser2: SerializerWithStringManifest ⇒
-        val manifest = ser2.manifest(selector)
-        builder.setManifest(manifest)
-      case _ ⇒
-        builder.setManifest(
-          if (serializer.includeManifest) selector.getClass.getName
-          else ""
-        )
-    }
+    val manifest = Serializers.manifestFor(serializer, selector)
+    builder.setManifest(manifest)
+
     builder.build()
   }
 
@@ -177,9 +172,8 @@ class MessageSerializer(val system: ExtendedActorSystem) extends SerializerWithS
   }
 
   private def metricsGossipEnvelopeToProto(envelope: MetricsGossipEnvelope): cm.MetricsGossipEnvelope = {
-    import scala.collection.breakOut
     val allNodeMetrics = envelope.gossip.nodes
-    val allAddresses: Vector[Address] = allNodeMetrics.map(_.address)(breakOut)
+    val allAddresses: Vector[Address] = allNodeMetrics.iterator.map(_.address).to(immutable.Vector)
     val addressMapping = allAddresses.zipWithIndex.toMap
     val allMetricNames: Vector[String] = allNodeMetrics.foldLeft(Set.empty[String])((s, n) ⇒ s ++ n.metrics.iterator.map(_.name)).toVector
     val metricNamesMapping = allMetricNames.zipWithIndex.toMap
@@ -228,9 +222,8 @@ class MessageSerializer(val system: ExtendedActorSystem) extends SerializerWithS
     metricsGossipEnvelopeFromProto(cm.MetricsGossipEnvelope.parseFrom(decompress(bytes)))
 
   private def metricsGossipEnvelopeFromProto(envelope: cm.MetricsGossipEnvelope): MetricsGossipEnvelope = {
-    import scala.collection.breakOut
     val mgossip = envelope.getGossip
-    val addressMapping: Vector[Address] = mgossip.getAllAddressesList.asScala.map(addressFromProto)(breakOut)
+    val addressMapping: Vector[Address] = mgossip.getAllAddressesList.asScala.iterator.map(addressFromProto).to(Vector)
     val metricNameMapping: Vector[String] = mgossip.getAllMetricNamesList.asScala.toVector
 
     def ewmaFromProto(ewma: cm.NodeMetrics.EWMA): Option[EWMA] =
@@ -259,9 +252,9 @@ class MessageSerializer(val system: ExtendedActorSystem) extends SerializerWithS
 
     def nodeMetricsFromProto(nodeMetrics: cm.NodeMetrics): NodeMetrics =
       NodeMetrics(addressMapping(nodeMetrics.getAddressIndex), nodeMetrics.getTimestamp,
-        nodeMetrics.getMetricsList.asScala.map(metricFromProto)(breakOut))
+        nodeMetrics.getMetricsList.asScala.iterator.map(metricFromProto).to(immutable.Set))
 
-    val nodeMetrics: Set[NodeMetrics] = mgossip.getNodeMetricsList.asScala.map(nodeMetricsFromProto)(breakOut)
+    val nodeMetrics: Set[NodeMetrics] = mgossip.getNodeMetricsList.asScala.iterator.map(nodeMetricsFromProto).to(immutable.Set)
 
     MetricsGossipEnvelope(addressFromProto(envelope.getFrom), MetricsGossip(nodeMetrics), envelope.getReply)
   }

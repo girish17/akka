@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.remote.transport
 
 import akka.actor._
@@ -24,7 +25,6 @@ import scala.util.{ Failure, Success }
 import scala.util.control.NonFatal
 import akka.dispatch.sysmsg.{ Unwatch, Watch }
 import akka.dispatch.{ RequiresMessageQueue, UnboundedMessageQueueSemantics }
-import akka.event.LoggingAdapter
 import akka.remote.RARP
 
 class ThrottlerProvider extends TransportAdapterProvider {
@@ -165,6 +165,31 @@ object ThrottlerTransportAdapter {
      */
     def getInstance = this
   }
+
+  /**
+   * Java API: get the Direction.Send instance
+   */
+  def sendDirection(): Direction = Direction.Send
+
+  /**
+   * Java API: get the Direction.Receive instance
+   */
+  def receiveDirection(): Direction = Direction.Receive
+
+  /**
+   * Java API: get the Direction.Both instance
+   */
+  def bothDirection(): Direction = Direction.Both
+
+  /**
+   * Java API: get the ThrottleMode.Blackhole instance
+   */
+  def blackholeThrottleMode(): ThrottleMode = Blackhole
+
+  /**
+   * Java API: get the ThrottleMode.Unthrottled instance
+   */
+  def unthrottledThrottleMode(): ThrottleMode = Unthrottled
 }
 
 class ThrottlerTransportAdapter(_wrappedTransport: Transport, _system: ExtendedActorSystem) extends ActorTransportAdapter(_wrappedTransport, _system) {
@@ -471,7 +496,7 @@ private[transport] class ThrottledAssociation(
       inboundThrottleMode = mode
       sender() ! SetThrottleAck
       stay()
-    case Event(Disassociated(info), _) ⇒
+    case Event(Disassociated(_), _) ⇒
       stop() // not notifying the upstream handler is intentional: we are relying on heartbeating
     case Event(FailWith(reason), _) ⇒
       if (upstreamListener ne null) upstreamListener notify Disassociated(reason)
@@ -488,7 +513,7 @@ private[transport] class ThrottledAssociation(
     } catch {
       // This layer should not care about malformed packets. Also, this also useful for testing, because
       // arbitrary payload could be passed in
-      case NonFatal(e) ⇒ None
+      case NonFatal(_) ⇒ None
     }
   }
 

@@ -1,13 +1,14 @@
-/**
- * Copyright (C) 2015-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2015-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.stream.scaladsl
 
 import akka.actor.Status
 import akka.pattern.pipe
 import akka.stream.Attributes.inputBuffer
 import akka.stream.{ ActorMaterializer, StreamDetachedException }
-import akka.stream.testkit.Utils._
+import akka.stream.testkit.scaladsl.StreamTestKit._
 import akka.stream.testkit._
 
 import scala.concurrent.{ Await, Promise }

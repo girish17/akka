@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2015-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2015-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.stream.io
 
 import java.io.OutputStream
@@ -8,6 +9,7 @@ import java.io.OutputStream
 import akka.stream.scaladsl.{ Source, StreamConverters }
 import akka.stream.testkit._
 import akka.stream.testkit.Utils._
+import akka.stream.testkit.scaladsl.StreamTestKit._
 import akka.stream.{ AbruptIOTerminationException, ActorMaterializer, ActorMaterializerSettings }
 import akka.testkit.TestProbe
 import akka.util.ByteString

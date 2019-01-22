@@ -1,13 +1,14 @@
-/**
- * Copyright (C) 2017-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2017-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.actor.typed.javadsl
 
+import akka.actor
 import akka.actor.typed.Behavior
 import akka.actor.typed.Props
 import akka.actor.typed.EmptyProps
 import akka.actor.typed.ActorRef
-import akka.actor.typed.internal.adapter.ActorRefAdapter
 import akka.actor.typed.scaladsl.adapter._
 import akka.actor.typed.ActorSystem
 import akka.actor.typed.internal.adapter.ActorContextAdapter
@@ -58,6 +59,9 @@ object Adapter {
 
   def toUntyped(sys: ActorSystem[_]): akka.actor.ActorSystem =
     sys.toUntyped
+
+  def toUntyped(ctx: ActorContext[_]): actor.ActorContext =
+    ActorContextAdapter.toUntyped(ctx)
 
   def watch[U](ctx: akka.actor.ActorContext, other: ActorRef[U]): Unit =
     ctx.watch(other)

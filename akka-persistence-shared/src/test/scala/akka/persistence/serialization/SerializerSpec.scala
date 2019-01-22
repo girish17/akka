@@ -1,5 +1,5 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.persistence.serialization
@@ -258,7 +258,7 @@ class MessageSerializerPersistenceSpec extends AkkaSpec(customSerializers) {
         val expected = PersistentRepr(MyPayload(".a."), 13, "p1", "", true, Actor.noSender)
         val serializer = serialization.findSerializerFor(expected)
         val deserialized = serializer.fromBinary(bytes, None).asInstanceOf[PersistentRepr]
-        deserialized.sender should not be (null)
+        deserialized.sender should not be null
         val deserializedWithoutSender = deserialized.update(sender = Actor.noSender)
         deserializedWithoutSender should be(expected)
       }
@@ -326,11 +326,11 @@ class MessageSerializerRemotingSpec extends AkkaSpec(remote.withFallback(customS
 
   val serialization = SerializationExtension(system)
 
-  override protected def atStartup() {
+  override protected def atStartup(): Unit = {
     remoteSystem.actorOf(Props[RemoteActor], "remote")
   }
 
-  override def afterTermination() {
+  override def afterTermination(): Unit = {
     Await.ready(remoteSystem.terminate(), Duration.Inf)
   }
 

@@ -1,15 +1,20 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.cluster
+
+import java.util.concurrent.TimeUnit
 
 import scala.annotation.tailrec
 import scala.collection.immutable
-import akka.actor.{ Actor, ActorLogging, ActorPath, ActorRef, ActorSelection, Address, DeadLetterSuppression, RootActorPath }
+
+import akka.actor.{ Actor, ActorLogging, ActorPath, ActorSelection, Address, DeadLetterSuppression, RootActorPath }
 import akka.cluster.ClusterEvent._
 import akka.remote.FailureDetectorRegistry
 import akka.remote.HeartbeatMessage
 import akka.annotation.InternalApi
+import akka.util.ccompat._
 
 /**
  * INTERNAL API.
@@ -22,10 +27,14 @@ private[cluster] final class ClusterHeartbeatReceiver extends Actor with ActorLo
 
   // Important - don't use Cluster(context.system) in constructor because that would
   // cause deadlock. See startup sequence in ClusterDaemon.
-  lazy val selfHeartbeatRsp = HeartbeatRsp(Cluster(context.system).selfUniqueAddress)
+  lazy val cluster = Cluster(context.system)
+  lazy val selfHeartbeatRsp = HeartbeatRsp(cluster.selfUniqueAddress)
+  lazy val verboseHeartbeat = cluster.settings.Debug.VerboseHeartbeatLogging
 
   def receive = {
-    case Heartbeat(from) ⇒ sender() ! selfHeartbeatRsp
+    case Heartbeat(from) ⇒
+      if (verboseHeartbeat) log.debug("Cluster Node [{}] - Heartbeat from [{}]", cluster.selfAddress, from)
+      sender() ! selfHeartbeatRsp
   }
 
 }
@@ -92,6 +101,9 @@ private[cluster] final class ClusterHeartbeatSender extends Actor with ActorLogg
     PeriodicTasksInitialDelay max HeartbeatInterval,
     HeartbeatInterval, self, HeartbeatTick)
 
+  // used for logging warning if actual tick interval is unexpected (e.g. due to starvation)
+  private var tickTimestamp = System.nanoTime() + (PeriodicTasksInitialDelay max HeartbeatInterval).toNanos
+
   override def preStart(): Unit = {
     cluster.subscribe(self, classOf[MemberEvent], classOf[ReachabilityEvent])
   }
@@ -115,6 +127,7 @@ private[cluster] final class ClusterHeartbeatSender extends Actor with ActorLogg
       init(s)
       context.become(active)
     case HeartbeatTick ⇒
+      tickTimestamp = System.nanoTime() // start checks when active
   }
 
   def active: Actor.Receive = {
@@ -170,6 +183,21 @@ private[cluster] final class ClusterHeartbeatSender extends Actor with ActorLogg
       }
       heartbeatReceiver(to.address) ! selfHeartbeat
     }
+
+    checkTickInterval()
+  }
+
+  private def checkTickInterval(): Unit = {
+    val now = System.nanoTime()
+    if ((now - tickTimestamp) >= (HeartbeatInterval.toNanos * 2))
+      log.warning(
+        "Cluster Node [{}] - Scheduled sending of heartbeat was delayed. " +
+          "Previous heartbeat was sent [{}] ms ago, expected interval is [{}] ms. This may cause failure detection " +
+          "to mark members as unreachable. The reason can be thread starvation, e.g. by running blocking tasks on the " +
+          "default dispatcher, CPU overload, or GC.",
+        selfAddress, TimeUnit.NANOSECONDS.toMillis(now - tickTimestamp), HeartbeatInterval.toMillis)
+    tickTimestamp = now
+
   }
 
   def heartbeatRsp(from: UniqueAddress): Unit = {
@@ -311,13 +339,13 @@ private[cluster] final case class HeartbeatNodeRing(
             take(n - 1, iter, acc + next) // include the reachable
         }
 
-      val (remaining, slice1) = take(monitoredByNrOfMembers, nodeRing.from(sender).tail.iterator, Set.empty)
+      val (remaining, slice1) = take(monitoredByNrOfMembers, nodeRing.rangeFrom(sender).tail.iterator, Set.empty)
       val slice =
         if (remaining == 0)
           slice1
         else {
           // wrap around
-          val (_, slice2) = take(remaining, nodeRing.to(sender).iterator.filterNot(_ == sender), slice1)
+          val (_, slice2) = take(remaining, nodeRing.rangeTo(sender).iterator.filterNot(_ == sender), slice1)
           slice2
         }
 

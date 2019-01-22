@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2015-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2015-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.stream.impl
 
 import akka.annotation.InternalApi
@@ -78,6 +79,7 @@ import akka.stream._
     val wireTap = name("wireTap")
     val balance = name("balance")
     val zip = name("zip")
+    val zipLatest = name("zipLatest")
     val zipN = name("zipN")
     val zipWithN = name("zipWithN")
     val zipWithIndex = name("zipWithIndex")
@@ -123,6 +125,7 @@ import akka.stream._
     val headOptionSink = name("headOptionSink") and inputBufferOne
     val lastSink = name("lastSink")
     val lastOptionSink = name("lastOptionSink")
+    val takeLastSink = name("takeLastSink")
     val seqSink = name("seqSink")
     val publisherSink = name("publisherSink")
     val fanoutPublisherSink = name("fanoutPublisherSink")

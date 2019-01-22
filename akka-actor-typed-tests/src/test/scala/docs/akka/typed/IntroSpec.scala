@@ -1,38 +1,107 @@
-/**
- * Copyright (C) 2014-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2014-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package docs.akka.typed
 
+//#fiddle_code
 //#imports
+import akka.NotUsed
+import akka.actor.typed.scaladsl.Behaviors
+import akka.actor.typed.{ ActorRef, ActorSystem, Behavior, DispatcherSelector, Terminated }
+//#imports
+//#fiddle_code
+
+import org.scalatest.WordSpecLike
+import akka.actor.testkit.typed.scaladsl.ActorTestKit
+import akka.actor.testkit.typed.scaladsl.ScalaTestWithActorTestKit
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 
-import akka.NotUsed
-import akka.actor.typed.scaladsl.AskPattern._
-import akka.actor.typed.scaladsl.Behaviors
-import akka.actor.typed.{ ActorRef, ActorSystem, Behavior, Terminated }
-import akka.testkit.typed.scaladsl.ActorTestKit
-
-import scala.concurrent.duration._
-import scala.concurrent.{ Await, Future }
-//#imports
-
-import akka.actor.typed.TypedAkkaSpecWithShutdown
-
 object IntroSpec {
+  //format: OFF
+  //#fiddle_code
 
   //#hello-world-actor
   object HelloWorld {
     final case class Greet(whom: String, replyTo: ActorRef[Greeted])
-    final case class Greeted(whom: String)
+    final case class Greeted(whom: String, from: ActorRef[Greet])
 
-    val greeter = Behaviors.immutable[Greet] { (_, msg) ⇒
-      println(s"Hello ${msg.whom}!")
-      msg.replyTo ! Greeted(msg.whom)
+    val greeter: Behavior[Greet] = Behaviors.receive { (context, message) ⇒
+  //#fiddle_code
+      context.log.info("Hello {}!", message.whom)
+  //#fiddle_code
+  //#hello-world-actor
+      println(s"Hello ${message.whom}!")
+  //#hello-world-actor
+      message.replyTo ! Greeted(message.whom, context.self)
       Behaviors.same
     }
   }
   //#hello-world-actor
+
+  //#hello-world-bot
+  object HelloWorldBot {
+
+    def bot(greetingCounter: Int, max: Int): Behavior[HelloWorld.Greeted] =
+      Behaviors.receive { (context, message) ⇒
+        val n = greetingCounter + 1
+  //#fiddle_code
+        context.log.info("Greeting {} for {}", n, message.whom)
+  //#fiddle_code
+  //#hello-world-bot
+        println(s"Greeting ${n} for ${message.whom}")
+  //#hello-world-bot
+        if (n == max) {
+          Behaviors.stopped
+        } else {
+          message.from ! HelloWorld.Greet(message.whom, context.self)
+          bot(n, max)
+        }
+      }
+  }
+  //#hello-world-bot
+
+  //#hello-world-main
+  object HelloWorldMain {
+
+    final case class Start(name: String)
+
+    val main: Behavior[Start] =
+      Behaviors.setup { context ⇒
+        val greeter = context.spawn(HelloWorld.greeter, "greeter")
+
+        Behaviors.receiveMessage { message ⇒
+          val replyTo = context.spawn(HelloWorldBot.bot(greetingCounter = 0, max = 3), message.name)
+          greeter ! HelloWorld.Greet(message.name, replyTo)
+          Behaviors.same
+        }
+      }
+  }
+  //#hello-world-main
+  //#fiddle_code
+  //format: ON
+
+  object CustomDispatchersExample {
+    import HelloWorldMain.Start
+
+    //#hello-world-main-with-dispatchers
+    val main: Behavior[Start] =
+      Behaviors.setup { context ⇒
+        val dispatcherPath = "akka.actor.default-blocking-io-dispatcher"
+
+        val props = DispatcherSelector.fromConfig(dispatcherPath)
+        val greeter = context.spawn(HelloWorld.greeter, "greeter", props)
+
+        Behaviors.receiveMessage { message ⇒
+          val replyTo = context.spawn(HelloWorldBot.bot(greetingCounter = 0, max = 3), message.name)
+
+          greeter ! HelloWorld.Greet(message.name, replyTo)
+          Behaviors.same
+        }
+      }
+    //#hello-world-main-with-dispatchers
+  }
 
   //#chatroom-actor
   object ChatRoom {
@@ -62,12 +131,12 @@ object IntroSpec {
       chatRoom(List.empty)
 
     private def chatRoom(sessions: List[ActorRef[SessionCommand]]): Behavior[RoomCommand] =
-      Behaviors.immutable[RoomCommand] { (ctx, msg) ⇒
-        msg match {
+      Behaviors.receive { (context, message) ⇒
+        message match {
           case GetSession(screenName, client) ⇒
             // create a child actor for further interaction with the client
-            val ses = ctx.spawn(
-              session(ctx.self, screenName, client),
+            val ses = context.spawn(
+              session(context.self, screenName, client),
               name = URLEncoder.encode(screenName, StandardCharsets.UTF_8.name))
             client ! SessionGranted(ses)
             chatRoom(ses :: sessions)
@@ -82,8 +151,8 @@ object IntroSpec {
       room:       ActorRef[PublishSessionMessage],
       screenName: String,
       client:     ActorRef[SessionEvent]): Behavior[SessionCommand] =
-      Behaviors.immutable { (ctx, msg) ⇒
-        msg match {
+      Behaviors.receive { (context, message) ⇒
+        message match {
           case PostMessage(message) ⇒
             // from client, publish to others via the room
             room ! PublishSessionMessage(screenName, message)
@@ -100,71 +169,64 @@ object IntroSpec {
 
 }
 
-class IntroSpec extends ActorTestKit with TypedAkkaSpecWithShutdown {
+class IntroSpec extends ScalaTestWithActorTestKit with WordSpecLike {
 
   import IntroSpec._
 
   "Hello world" must {
     "say hello" in {
-      // TODO Implicits.global is not something we would like to encourage in docs
+      //#fiddle_code
       //#hello-world
-      import HelloWorld._
-      // using global pool since we want to run tasks after system.terminate
-      import scala.concurrent.ExecutionContext.Implicits.global
 
-      val system: ActorSystem[Greet] = ActorSystem(greeter, "hello")
+      val system: ActorSystem[HelloWorldMain.Start] =
+        ActorSystem(HelloWorldMain.main, "hello")
 
-      val future: Future[Greeted] = system ? (Greet("world", _))
+      system ! HelloWorldMain.Start("World")
+      system ! HelloWorldMain.Start("Akka")
 
-      for {
-        greeting ← future.recover { case ex ⇒ ex.getMessage }
-        done ← {
-          println(s"result: $greeting")
-          system.terminate()
-        }
-      } println("system terminated")
       //#hello-world
+      //#fiddle_code
+
+      Thread.sleep(500) // it will not fail if too short
+      ActorTestKit.shutdown(system)
     }
 
     "chat" in {
       //#chatroom-gabbler
       import ChatRoom._
 
-      val gabbler =
-        Behaviors.immutable[SessionEvent] { (_, msg) ⇒
-          msg match {
-            //#chatroom-gabbler
-            // We document that the compiler warns about the missing handler for `SessionDenied`
-            case SessionDenied(reason) ⇒
-              println(s"cannot start chat room session: $reason")
-              Behaviors.stopped
-            //#chatroom-gabbler
-            case SessionGranted(handle) ⇒
-              handle ! PostMessage("Hello World!")
-              Behaviors.same
-            case MessagePosted(screenName, message) ⇒
-              println(s"message has been posted by '$screenName': $message")
-              Behaviors.stopped
-          }
+      val gabbler: Behavior[SessionEvent] =
+        Behaviors.receiveMessage {
+          //#chatroom-gabbler
+          // We document that the compiler warns about the missing handler for `SessionDenied`
+          case SessionDenied(reason) ⇒
+            println(s"cannot start chat room session: $reason")
+            Behaviors.stopped
+          //#chatroom-gabbler
+          case SessionGranted(handle) ⇒
+            handle ! PostMessage("Hello World!")
+            Behaviors.same
+          case MessagePosted(screenName, message) ⇒
+            println(s"message has been posted by '$screenName': $message")
+            Behaviors.stopped
         }
       //#chatroom-gabbler
 
       //#chatroom-main
       val main: Behavior[NotUsed] =
-        Behaviors.setup { ctx ⇒
-          val chatRoom = ctx.spawn(ChatRoom.behavior, "chatroom")
-          val gabblerRef = ctx.spawn(gabbler, "gabbler")
-          ctx.watch(gabblerRef)
+        Behaviors.setup { context ⇒
+          val chatRoom = context.spawn(ChatRoom.behavior, "chatroom")
+          val gabblerRef = context.spawn(gabbler, "gabbler")
+          context.watch(gabblerRef)
           chatRoom ! GetSession("ol’ Gabbler", gabblerRef)
 
-          Behaviors.onSignal {
+          Behaviors.receiveSignal {
             case (_, Terminated(ref)) ⇒
               Behaviors.stopped
           }
         }
 
       val system = ActorSystem(main, "ChatRoomDemo")
-      Await.result(system.whenTerminated, 3.seconds)
       //#chatroom-main
     }
   }

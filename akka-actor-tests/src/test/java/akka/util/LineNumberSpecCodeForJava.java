@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2014-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2014-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.util;
 
 import java.io.Serializable;
@@ -36,5 +37,4 @@ public class LineNumberSpecCodeForJava {
       }
     };
   }
-
 }

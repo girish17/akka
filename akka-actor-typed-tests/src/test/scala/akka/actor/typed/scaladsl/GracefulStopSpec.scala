@@ -1,14 +1,17 @@
-/**
- * Copyright (C) 2017 Lightbend Inc. <http://www.lightbend.com>
+/*
+ * Copyright (C) 2017-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.actor.typed
 package scaladsl
 
 import akka.Done
 import akka.NotUsed
-import akka.testkit.typed.scaladsl.{ ActorTestKit, TestProbe }
+import akka.actor.testkit.typed.scaladsl.ScalaTestWithActorTestKit
+import akka.actor.testkit.typed.scaladsl.TestProbe
+import org.scalatest.WordSpecLike
 
-final class GracefulStopSpec extends ActorTestKit with TypedAkkaSpecWithShutdown {
+final class GracefulStopSpec extends ScalaTestWithActorTestKit with WordSpecLike {
 
   "Graceful stop" must {
 
@@ -17,21 +20,21 @@ final class GracefulStopSpec extends ActorTestKit with TypedAkkaSpecWithShutdown
 
       val behavior =
         Behaviors.setup[akka.NotUsed] { context ⇒
-          val c1 = context.spawn[NotUsed](Behaviors.onSignal {
+          context.spawn[NotUsed](Behaviors.receiveSignal {
             case (_, PostStop) ⇒
               probe.ref ! "child-done"
               Behaviors.stopped
           }, "child1")
 
-          val c2 = context.spawn[NotUsed](Behaviors.onSignal {
+          context.spawn[NotUsed](Behaviors.receiveSignal {
             case (_, PostStop) ⇒
               probe.ref ! "child-done"
               Behaviors.stopped
           }, "child2")
 
           Behaviors.stopped {
-            Behaviors.onSignal {
-              case (ctx, PostStop) ⇒
+            Behaviors.receiveSignal {
+              case (_, PostStop) ⇒
                 // cleanup function body
                 probe.ref ! "parent-done"
                 Behaviors.same
@@ -49,11 +52,11 @@ final class GracefulStopSpec extends ActorTestKit with TypedAkkaSpecWithShutdown
       val probe = TestProbe[Done]("probe")
 
       val behavior =
-        Behaviors.setup[akka.NotUsed] { context ⇒
+        Behaviors.setup[akka.NotUsed] { _ ⇒
           // do not spawn any children
           Behaviors.stopped {
-            Behaviors.onSignal {
-              case (ctx, PostStop) ⇒
+            Behaviors.receiveSignal {
+              case (_, PostStop) ⇒
                 // cleanup function body
                 probe.ref ! Done
                 Behaviors.same

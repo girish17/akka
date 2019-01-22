@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2017-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2017-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.cluster.ddata
 
 import akka.actor.Address
@@ -20,8 +21,8 @@ object DeltaPropagationSelectorSpec {
     override val allNodes: Vector[Address]) extends DeltaPropagationSelector {
     override val gossipIntervalDivisor = 5
     override def createDeltaPropagation(deltas: Map[KeyId, (ReplicatedData, Long, Long)]): DeltaPropagation =
-      DeltaPropagation(selfUniqueAddress, false, deltas.mapValues {
-        case (d, fromSeqNr, toSeqNr) ⇒ Delta(DataEnvelope(d), fromSeqNr, toSeqNr)
+      DeltaPropagation(selfUniqueAddress, false, deltas.map {
+        case (key, (d, fromSeqNr, toSeqNr)) ⇒ (key, Delta(DataEnvelope(d), fromSeqNr, toSeqNr))
       })
     override def maxDeltaSize: Int = 10
   }
@@ -175,7 +176,7 @@ class DeltaPropagationSelectorSpec extends WordSpec with Matchers with TypeCheck
       selector.collectPropagations() should ===(Map(nodes(0) → expected))
     }
 
-    "calcualte right slice size" in {
+    "calculate right slice size" in {
       val selector = new TestSelector(selfUniqueAddress, nodes)
       selector.nodesSliceSize(0) should ===(0)
       selector.nodesSliceSize(1) should ===(1)

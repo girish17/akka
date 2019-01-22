@@ -1,5 +1,5 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.cluster
@@ -21,6 +21,7 @@ import akka.util.OptionVal
  * cluster events published on the event bus.
  */
 private[akka] class ClusterReadView(cluster: Cluster) extends Closeable {
+  import cluster.InfoLogger._
 
   /**
    * Current state
@@ -34,6 +35,9 @@ private[akka] class ClusterReadView(cluster: Cluster) extends Closeable {
   // lazy init below, updated when state is updated
   @volatile
   private var _cachedSelf: OptionVal[Member] = OptionVal.None
+
+  @volatile
+  private var _closed: Boolean = false
 
   /**
    * Current internal cluster stats, updated periodically via event bus.
@@ -52,7 +56,7 @@ private[akka] class ClusterReadView(cluster: Cluster) extends Closeable {
       def receive = {
         case e: ClusterDomainEvent ⇒
           e match {
-            case SeenChanged(convergence, seenBy) ⇒
+            case SeenChanged(_, seenBy) ⇒
               _state = _state.copy(seenBy = seenBy)
             case ReachabilityChanged(reachability) ⇒
               _reachability = reachability
@@ -87,9 +91,23 @@ private[akka] class ClusterReadView(cluster: Cluster) extends Closeable {
 
           e match {
             case e: MemberEvent if e.member.address == selfAddress ⇒
-              _cachedSelf = OptionVal.Some(e.member)
+              _cachedSelf match {
+                case OptionVal.Some(s) if s.status == MemberStatus.Removed && _closed ⇒
+                // ignore as Cluster.close has been called
+                case _ ⇒
+                  _cachedSelf = OptionVal.Some(e.member)
+              }
             case _ ⇒
           }
+
+          // once captured, optional verbose logging of event
+          e match {
+            case _: SeenChanged ⇒ // ignore
+            case event ⇒
+              if (cluster.settings.LogInfoVerbose)
+                logInfo(" - event {}", event)
+          }
+
         case s: CurrentClusterState ⇒ _state = s
       }
     }).withDispatcher(cluster.settings.UseDispatcher).withDeploy(Deploy.local), name = "clusterEventBusListener")
@@ -186,6 +204,7 @@ private[akka] class ClusterReadView(cluster: Cluster) extends Closeable {
    * Unsubscribe to cluster events.
    */
   def close(): Unit = {
+    _closed = true
     _cachedSelf = OptionVal.Some(self.copy(MemberStatus.Removed))
     if (!eventBusListener.isTerminated)
       eventBusListener ! PoisonPill

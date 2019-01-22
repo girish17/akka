@@ -1,12 +1,13 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.cluster.sharding
 
 import java.net.URLEncoder
 
 import akka.pattern.AskTimeoutException
-import akka.util.{ MessageBufferMap, Timeout }
+import akka.util.{ MessageBufferMap, PrettyDuration, Timeout }
 import akka.pattern.{ ask, pipe }
 import akka.actor._
 import akka.cluster.Cluster
@@ -20,6 +21,7 @@ import scala.concurrent.Future
 import scala.reflect.ClassTag
 import scala.concurrent.Promise
 import akka.Done
+import akka.annotation.InternalApi
 import akka.cluster.ClusterSettings
 import akka.cluster.ClusterSettings.DataCenter
 
@@ -111,10 +113,22 @@ object ShardRegion {
      */
     def entityMessage(message: Any): Any
     /**
-     * Extract the entity id from an incoming `message`. Only messages that passed the [[#entityId]]
+     * Extract the shard id from an incoming `message`. Only messages that passed the [[#entityId]]
      * function will be used as input to this function.
      */
     def shardId(message: Any): String
+  }
+
+  object HashCodeMessageExtractor {
+
+    /** INTERNAL API */
+    @InternalApi
+    private[sharding] def shardId(id: String, maxNumberOfShards: Int): String = {
+      // It would be better to have abs(id.hashCode % maxNumberOfShards), see issue #25034
+      // but to avoid getting different values when rolling upgrade we keep the old way,
+      // and it doesn't have any serious consequences
+      (math.abs(id.hashCode) % maxNumberOfShards).toString
+    }
   }
 
   /**
@@ -130,10 +144,10 @@ object ShardRegion {
 
     override def shardId(message: Any): String = {
       val id = message match {
-        case ShardRegion.StartEntity(id) ⇒ id
-        case _                           ⇒ entityId(message)
+        case ShardRegion.StartEntity(entityId) ⇒ entityId
+        case _                                 ⇒ entityId(message)
       }
-      (math.abs(id.hashCode) % maxNumberOfShards).toString
+      HashCodeMessageExtractor.shardId(id, maxNumberOfShards)
     }
   }
 
@@ -209,7 +223,7 @@ object ShardRegion {
    * Send this message to the `ShardRegion` actor to request for [[ClusterShardingStats]],
    * which contains statistics about the currently running sharded entities in the
    * entire cluster. If the `timeout` is reached without answers from all shard regions
-   * the reply will contain an emmpty map of regions.
+   * the reply will contain an empty map of regions.
    *
    * Intended for testing purpose to see when cluster sharding is "ready" or to monitor
    * the state of the shard regions.
@@ -322,16 +336,16 @@ object ShardRegion {
    */
   final case class StartEntityAck(entityId: EntityId, shardId: ShardRegion.ShardId) extends ClusterShardingSerializable
 
-  private def roleOption(role: String): Option[String] =
-    if (role == "") None else Option(role)
-
   /**
    * INTERNAL API. Sends stopMessage (e.g. `PoisonPill`) to the entities and when all of
    * them have terminated it replies with `ShardStopped`.
+   * If the entities don't terminate after `handoffTimeout` it will try stopping them forcefully.
    */
-  private[akka] class HandOffStopper(shard: String, replyTo: ActorRef, entities: Set[ActorRef], stopMessage: Any)
-    extends Actor {
+  private[akka] class HandOffStopper(shard: String, replyTo: ActorRef, entities: Set[ActorRef], stopMessage: Any, handoffTimeout: FiniteDuration)
+    extends Actor with ActorLogging {
     import ShardCoordinator.Internal.ShardStopped
+
+    context.setReceiveTimeout(handoffTimeout)
 
     entities.foreach { a ⇒
       context watch a
@@ -341,6 +355,15 @@ object ShardRegion {
     var remaining = entities
 
     def receive = {
+      case ReceiveTimeout ⇒
+        log.warning("HandOffStopMessage[{}] is not handled by some of the entities of the `{}` shard, " +
+          "stopping the remaining entities.", stopMessage.getClass.getName, shard)
+
+        remaining.foreach {
+          ref ⇒
+            context stop ref
+        }
+
       case Terminated(ref) ⇒
         remaining -= ref
         if (remaining.isEmpty) {
@@ -351,8 +374,8 @@ object ShardRegion {
   }
 
   private[akka] def handOffStopperProps(
-    shard: String, replyTo: ActorRef, entities: Set[ActorRef], stopMessage: Any): Props =
-    Props(new HandOffStopper(shard, replyTo, entities, stopMessage)).withDeploy(Deploy.local)
+    shard: String, replyTo: ActorRef, entities: Set[ActorRef], stopMessage: Any, handoffTimeout: FiniteDuration): Props =
+    Props(new HandOffStopper(shard, replyTo, entities, stopMessage, handoffTimeout)).withDeploy(Deploy.local)
 }
 
 /**
@@ -417,6 +440,8 @@ private[akka] class ShardRegion(
   // subscribe to MemberEvent, re-subscribe when restart
   override def preStart(): Unit = {
     cluster.subscribe(self, classOf[MemberEvent])
+    if (settings.passivateIdleEntityAfter > Duration.Zero)
+      log.info("Idle entities will be passivated after [{}]", PrettyDuration.format(settings.passivateIdleEntityAfter))
   }
 
   override def postStop(): Unit = {
@@ -460,7 +485,7 @@ private[akka] class ShardRegion(
     }
   }
 
-  def receive = {
+  def receive: Receive = {
     case Terminated(ref)                         ⇒ receiveTerminated(ref)
     case ShardInitialized(shardId)               ⇒ initializeShard(shardId, sender())
     case evt: ClusterDomainEvent                 ⇒ receiveClusterEvent(evt)
@@ -482,22 +507,14 @@ private[akka] class ShardRegion(
   def receiveClusterEvent(evt: ClusterDomainEvent): Unit = evt match {
     case MemberUp(m) ⇒
       if (matchingRole(m))
-        changeMembers {
-          // replace, it's possible that the upNumber is changed
-          membersByAge = membersByAge.filterNot(_.uniqueAddress == m.uniqueAddress)
-          membersByAge += m
-          membersByAge
-        }
+        // replace, it's possible that the upNumber is changed
+        changeMembers(membersByAge.filterNot(_.uniqueAddress == m.uniqueAddress) + m)
 
     case MemberRemoved(m, _) ⇒
       if (m.uniqueAddress == cluster.selfUniqueAddress)
         context.stop(self)
       else if (matchingRole(m))
-        changeMembers {
-          // filter, it's possible that the upNumber is changed
-          membersByAge = membersByAge.filterNot(_.uniqueAddress == m.uniqueAddress)
-          membersByAge
-        }
+        changeMembers(membersByAge.filterNot(_.uniqueAddress == m.uniqueAddress))
 
     case _: MemberEvent ⇒ // these are expected, no need to warn about them
 
@@ -573,15 +590,17 @@ private[akka] class ShardRegion(
 
   def receiveCommand(cmd: ShardRegionCommand): Unit = cmd match {
     case Retry ⇒
+      sendGracefulShutdownToCoordinator()
+
       if (shardBuffers.nonEmpty)
         retryCount += 1
       if (coordinator.isEmpty)
         register()
       else {
-        sendGracefulShutdownToCoordinator()
         requestShardBufferHomes()
-        tryCompleteGracefulShutdown()
       }
+
+      tryCompleteGracefulShutdown()
 
     case GracefulShutdown ⇒
       log.debug("Starting graceful shutdown of region and all its shards")
@@ -647,7 +666,7 @@ private[akka] class ShardRegion(
         case (shardId, state) ⇒ ShardRegion.ShardState(shardId, state.entityIds)
       }.toSet)
     }.recover {
-      case x: AskTimeoutException ⇒ CurrentShardRegionState(Set.empty)
+      case _: AskTimeoutException ⇒ CurrentShardRegionState(Set.empty)
     }.pipeTo(ref)
   }
 
@@ -675,10 +694,19 @@ private[akka] class ShardRegion(
 
   def register(): Unit = {
     coordinatorSelection.foreach(_ ! registrationMessage)
-    if (shardBuffers.nonEmpty && retryCount >= 5)
-      log.warning(
-        "Trying to register to coordinator at [{}], but no acknowledgement. Total [{}] buffered messages.",
-        coordinatorSelection, shardBuffers.totalSize)
+    if (shardBuffers.nonEmpty && retryCount >= 5) coordinatorSelection match {
+      case Some(actorSelection) ⇒
+        val coordinatorMessage =
+          if (cluster.state.unreachable(membersByAge.head)) s"Coordinator [${membersByAge.head}] is unreachable."
+          else s"Coordinator [${membersByAge.head}] is reachable."
+        log.warning(
+          "Trying to register to coordinator at [{}], but no acknowledgement. Total [{}] buffered messages. [{}]",
+          actorSelection, shardBuffers.totalSize, coordinatorMessage
+        )
+      case None ⇒ log.warning(
+        "No coordinator found to register. Probably, no seed-nodes configured and manual cluster join not performed? Total [{}] buffered messages.",
+        shardBuffers.totalSize)
+    }
   }
 
   def registrationMessage: Any =
@@ -758,7 +786,7 @@ private[akka] class ShardRegion(
               getShard(shardId)
           case None ⇒
             if (!shardBuffers.contains(shardId)) {
-              log.debug("Request shard [{}] home", shardId)
+              log.debug("Request shard [{}] home. Coordinator [{}]", shardId, coordinator)
               coordinator.foreach(_ ! GetShardHome(shardId))
             }
             val buf = shardBuffers.getOrEmpty(shardId)
@@ -787,7 +815,7 @@ private[akka] class ShardRegion(
             context.system.deadLetters ! msg
           case None ⇒
             if (!shardBuffers.contains(shardId)) {
-              log.debug("Request shard [{}] home", shardId)
+              log.debug("Request shard [{}] home. Coordinator [{}]", shardId, coordinator)
               coordinator.foreach(_ ! GetShardHome(shardId))
             }
             bufferMessage(shardId, msg, snd)

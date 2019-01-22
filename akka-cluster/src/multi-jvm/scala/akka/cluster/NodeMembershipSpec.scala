@@ -1,11 +1,13 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.cluster
 
 import akka.remote.testkit.MultiNodeConfig
 import akka.remote.testkit.MultiNodeSpec
 import akka.testkit._
+import akka.util.ccompat.imm._
 
 object NodeMembershipMultiJvmSpec extends MultiNodeConfig {
   val first = role("first")
@@ -39,7 +41,7 @@ abstract class NodeMembershipSpec
         cluster.join(first)
         awaitAssert(clusterView.members.size should ===(2))
         assertMembers(clusterView.members, first, second)
-        awaitAssert(clusterView.members.map(_.status) should ===(Set(MemberStatus.Up)))
+        awaitAssert(clusterView.members.unsorted.map(_.status) should ===(Set(MemberStatus.Up)))
       }
 
       enterBarrier("after-1")
@@ -53,7 +55,7 @@ abstract class NodeMembershipSpec
 
       awaitAssert(clusterView.members.size should ===(3))
       assertMembers(clusterView.members, first, second, third)
-      awaitAssert(clusterView.members.map(_.status) should ===(Set(MemberStatus.Up)))
+      awaitAssert(clusterView.members.unsorted.map(_.status) should ===(Set(MemberStatus.Up)))
 
       enterBarrier("after-2")
     }

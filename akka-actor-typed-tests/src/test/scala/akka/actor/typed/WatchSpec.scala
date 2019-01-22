@@ -1,17 +1,22 @@
-/**
- * Copyright (C) 2017-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2017-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.actor.typed
 
 import akka.Done
 import akka.actor.typed.scaladsl.Behaviors
+import akka.actor.typed.scaladsl.AbstractBehavior
 import akka.actor.typed.scaladsl.adapter._
 import akka.testkit.EventFilter
-import akka.testkit.typed.scaladsl.{ ActorTestKit, TestProbe }
+import akka.actor.testkit.typed.scaladsl.TestProbe
 
 import scala.concurrent._
 import scala.concurrent.duration._
+import akka.actor.testkit.typed.TestException
+import akka.actor.testkit.typed.scaladsl.ScalaTestWithActorTestKit
 import com.typesafe.config.ConfigFactory
+import org.scalatest.WordSpecLike
 
 object WatchSpec {
   val config = ConfigFactory.parseString("""akka.loggers = ["akka.testkit.TestEventListener"]""")
@@ -19,39 +24,43 @@ object WatchSpec {
   case object Stop
 
   val terminatorBehavior =
-    Behaviors.immutable[Stop.type] {
+    Behaviors.receive[Stop.type] {
       case (_, Stop) ⇒ Behaviors.stopped
     }
+
+  val mutableTerminatorBehavior = new AbstractBehavior[Stop.type] {
+    override def onMessage(message: Stop.type) = message match {
+      case Stop ⇒ Behaviors.stopped
+    }
+  }
 
   sealed trait Message
   sealed trait CustomTerminationMessage extends Message
   case object CustomTerminationMessage extends CustomTerminationMessage
   case object CustomTerminationMessage2 extends CustomTerminationMessage
   case class StartWatching(watchee: ActorRef[Stop.type]) extends Message
-  case class StartWatchingWith(watchee: ActorRef[Stop.type], msg: CustomTerminationMessage) extends Message
+  case class StartWatchingWith(watchee: ActorRef[Stop.type], message: CustomTerminationMessage) extends Message
 }
 
-class WatchSpec extends ActorTestKit
-  with TypedAkkaSpecWithShutdown {
+class WatchSpec extends ScalaTestWithActorTestKit(WatchSpec.config) with WordSpecLike {
 
-  override def config = WatchSpec.config
   implicit def untypedSystem = system.toUntyped
 
   import WatchSpec._
 
   class WatchSetup {
-    val terminator = systemActor(terminatorBehavior)
+    val terminator = spawn(terminatorBehavior)
     val receivedTerminationSignal: Promise[Terminated] = Promise()
     val watchProbe = TestProbe[Done]()
 
-    val watcher = systemActor(
+    val watcher = spawn(
       Behaviors.supervise(
-        Behaviors.immutable[StartWatching] {
-          case (ctx, StartWatching(watchee)) ⇒
-            ctx.watch(watchee)
+        Behaviors.receive[StartWatching] {
+          case (context, StartWatching(watchee)) ⇒
+            context.watch(watchee)
             watchProbe.ref ! Done
             Behaviors.same
-        }.onSignal {
+        }.receiveSignal {
           case (_, t: Terminated) ⇒
             receivedTerminationSignal.success(t)
             Behaviors.stopped
@@ -68,57 +77,91 @@ class WatchSpec extends ActorTestKit
 
       val termination = receivedTerminationSignal.future.futureValue
       termination.ref shouldEqual terminator
-      termination.failure shouldBe empty
     }
+
+    case class HasTerminated(t: Terminated) // we need to wrap it as it is handled specially
+    case class ChildHasFailed(t: ChildFailed) // we need to wrap it as it is handled specially
+
     "notify a parent of child termination because of failure" in {
-      case class Failed(t: Terminated) // we need to wrap it as it is handled specially
       val probe = TestProbe[Any]()
       val ex = new TestException("boom")
-      val parent = spawn(Behaviors.setup[Any] { ctx ⇒
-        val child = ctx.spawn(Behaviors.immutable[Any]((ctx, msg) ⇒
+      val parent = spawn(Behaviors.setup[Any] { context ⇒
+        val child = context.spawn(Behaviors.receive[Any]((context, message) ⇒
           throw ex
         ), "child")
-        ctx.watch(child)
+        context.watch(child)
 
-        Behaviors.immutable[Any] { (ctx, msg) ⇒
-          child ! msg
+        Behaviors.receive[Any] { (context, message) ⇒
+          child ! message
           Behaviors.same
-        }.onSignal {
+        }.receiveSignal {
+          case (_, t: ChildFailed) ⇒
+            probe.ref ! ChildHasFailed(t)
+            Behaviors.same
           case (_, t: Terminated) ⇒
-            probe.ref ! Failed(t)
+            probe.ref ! HasTerminated(t)
             Behaviors.same
         }
-      }, "parent")
+      }, "supervised-child-parent")
 
       EventFilter[TestException](occurrences = 1).intercept {
         parent ! "boom"
       }
-      val terminated = probe.expectMessageType[Failed].t
-      terminated.failure should ===(Some(ex)) // here we get the exception from the child
+      probe.expectMessageType[ChildHasFailed].t.cause shouldEqual ex
     }
+
+    "notify a parent of child termination because of failure with a supervisor" in {
+      val probe = TestProbe[Any]()
+      val ex = new TestException("boom")
+      val behavior = Behaviors.setup[Any] { context ⇒
+        val child = context.spawn(Behaviors.supervise(Behaviors.receive[Any]((context, message) ⇒ {
+          throw ex
+        })).onFailure[Throwable](SupervisorStrategy.stop), "child")
+        context.watch(child)
+
+        Behaviors.receive[Any] { (context, message) ⇒
+          child ! message
+          Behaviors.same
+        }.receiveSignal {
+          case (_, t: ChildFailed) ⇒
+            probe.ref ! ChildHasFailed(t)
+            Behaviors.same
+          case (_, t: Terminated) ⇒
+            probe.ref ! HasTerminated(t)
+            Behaviors.same
+        }
+      }
+      val parent = spawn(behavior, "parent")
+
+      EventFilter[TestException](occurrences = 1).intercept {
+        parent ! "boom"
+      }
+      probe.expectMessageType[ChildHasFailed].t.cause shouldEqual ex
+    }
+
     "fail the actor itself with DeathPact if it does not accept Terminated" in {
       case class Failed(t: Terminated) // we need to wrap it as it is handled specially
       val probe = TestProbe[Any]()
       val ex = new TestException("boom")
-      val grossoBosso = spawn(Behaviors.setup[Any] { ctx ⇒
-        val middleManagement = ctx.spawn(Behaviors.setup[Any] { ctx ⇒
-          val sixPackJoe = ctx.spawn(Behaviors.immutable[Any]((ctx, msg) ⇒
+      val grossoBosso = spawn(Behaviors.setup[Any] { context ⇒
+        val middleManagement = context.spawn(Behaviors.setup[Any] { context ⇒
+          val sixPackJoe = context.spawn(Behaviors.receive[Any]((context, message) ⇒
             throw ex
           ), "joe")
-          ctx.watch(sixPackJoe)
+          context.watch(sixPackJoe)
 
-          Behaviors.immutable[Any] { (ctx, msg) ⇒
-            sixPackJoe ! msg
+          Behaviors.receive[Any] { (context, message) ⇒
+            sixPackJoe ! message
             Behaviors.same
           } // no handling of terminated, even though we watched!!!
         }, "middle-management")
 
-        ctx.watch(middleManagement)
+        context.watch(middleManagement)
 
-        Behaviors.immutable[Any] { (ctx, msg) ⇒
-          middleManagement ! msg
+        Behaviors.receive[Any] { (context, message) ⇒
+          middleManagement ! message
           Behaviors.same
-        }.onSignal {
+        }.receiveSignal {
           case (_, t: Terminated) ⇒
             probe.ref ! Failed(t)
             Behaviors.stopped
@@ -131,9 +174,7 @@ class WatchSpec extends ActorTestKit
           grossoBosso ! "boom"
         }
       }
-      val terminated = probe.expectMessageType[Failed].t
-      terminated.failure.isDefined should ===(true)
-      terminated.failure.get shouldBe a[DeathPactException]
+      probe.expectMessageType[Failed]
     }
 
     "allow idempotent invocations of watch" in new WatchSetup {
@@ -147,19 +188,19 @@ class WatchSpec extends ActorTestKit
     }
 
     class WatchWithSetup {
-      val terminator = systemActor(terminatorBehavior)
+      val terminator = spawn(terminatorBehavior)
       val receivedTerminationSignal: Promise[Message] = Promise()
       val watchProbe = TestProbe[Done]()
 
-      val watcher = systemActor(
+      val watcher = spawn(
         Behaviors.supervise(
-          Behaviors.immutable[Message] {
-            case (ctx, StartWatchingWith(watchee, msg)) ⇒
-              ctx.watchWith(watchee, msg)
+          Behaviors.receive[Message] {
+            case (context, StartWatchingWith(watchee, message)) ⇒
+              context.watchWith(watchee, message)
               watchProbe.ref ! Done
               Behaviors.same
-            case (_, msg) ⇒
-              receivedTerminationSignal.success(msg)
+            case (_, message) ⇒
+              receivedTerminationSignal.success(message)
               Behaviors.stopped
           }).onFailure[Throwable](SupervisorStrategy.stop)
       )
@@ -183,23 +224,23 @@ class WatchSpec extends ActorTestKit
     }
 
     "allow watch message definition after watch using unwatch" in {
-      val terminator = systemActor(terminatorBehavior)
+      val terminator = spawn(terminatorBehavior)
       val receivedTerminationSignal: Promise[Message] = Promise()
       val watchProbe = TestProbe[Done]()
 
-      val watcher = systemActor(
+      val watcher = spawn(
         Behaviors.supervise(
-          Behaviors.immutable[Message] {
-            case (ctx, StartWatching(watchee)) ⇒
-              ctx.watch(watchee)
+          Behaviors.receive[Message] {
+            case (context, StartWatching(watchee)) ⇒
+              context.watch(watchee)
               Behaviors.same
-            case (ctx, StartWatchingWith(watchee, msg)) ⇒
-              ctx.unwatch(watchee)
-              ctx.watchWith(watchee, msg)
+            case (context, StartWatchingWith(watchee, message)) ⇒
+              context.unwatch(watchee)
+              context.watchWith(watchee, message)
               watchProbe.ref ! Done
               Behaviors.same
-            case (_, msg) ⇒
-              receivedTerminationSignal.success(msg)
+            case (_, message) ⇒
+              receivedTerminationSignal.success(message)
               Behaviors.stopped
           }).onFailure[Throwable](SupervisorStrategy.stop)
       )
@@ -213,20 +254,20 @@ class WatchSpec extends ActorTestKit
     }
 
     "allow watch message redefinition using unwatch" in {
-      val terminator = systemActor(terminatorBehavior)
+      val terminator = spawn(terminatorBehavior)
       val receivedTerminationSignal: Promise[Message] = Promise()
       val watchProbe = TestProbe[Done]()
 
-      val watcher = systemActor(
+      val watcher = spawn(
         Behaviors.supervise(
-          Behaviors.immutable[Message] {
-            case (ctx, StartWatchingWith(watchee, msg)) ⇒
-              ctx.unwatch(watchee)
-              ctx.watchWith(watchee, msg)
+          Behaviors.receive[Message] {
+            case (context, StartWatchingWith(watchee, message)) ⇒
+              context.unwatch(watchee)
+              context.watchWith(watchee, message)
               watchProbe.ref ! Done
               Behaviors.same
-            case (_, msg) ⇒
-              receivedTerminationSignal.success(msg)
+            case (_, message) ⇒
+              receivedTerminationSignal.success(message)
               Behaviors.stopped
           }).onFailure[Throwable](SupervisorStrategy.stop)
       )
@@ -240,21 +281,21 @@ class WatchSpec extends ActorTestKit
     }
 
     class ErrorTestSetup {
-      val terminator = systemActor(terminatorBehavior)
+      val terminator = spawn(terminatorBehavior)
       private val stopProbe = TestProbe[Done]()
 
-      val watcher = systemActor(
+      val watcher = spawn(
         Behaviors.supervise(
-          Behaviors.immutable[Message] {
-            case (ctx, StartWatchingWith(watchee, msg)) ⇒
-              ctx.watchWith(watchee, msg)
+          Behaviors.receive[Message] {
+            case (context, StartWatchingWith(watchee, message)) ⇒
+              context.watchWith(watchee, message)
               Behaviors.same
-            case (ctx, StartWatching(watchee)) ⇒
-              ctx.watch(watchee)
+            case (context, StartWatching(watchee)) ⇒
+              context.watch(watchee)
               Behaviors.same
-            case (_, msg) ⇒
+            case (_, _) ⇒
               Behaviors.stopped
-          }.onSignal {
+          }.receiveSignal {
             case (_, PostStop) ⇒
               Behaviors.stopped
           }

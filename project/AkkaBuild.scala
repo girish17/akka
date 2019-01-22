@@ -1,15 +1,15 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka
 
-import java.io.{ FileInputStream, InputStreamReader }
+import java.io.{FileInputStream, InputStreamReader}
 import java.util.Properties
 
-import com.typesafe.sbt.pgp.PgpKeys.publishSigned
 import sbt.Keys._
 import sbt._
+
 import scala.collection.breakOut
 
 object AkkaBuild {
@@ -20,13 +20,16 @@ object AkkaBuild {
 
   lazy val buildSettings = Dependencies.Versions ++ Seq(
     organization := "com.typesafe.akka",
-    version := "2.5-SNAPSHOT")
+    // use the same value as in the build scope, so it can be overriden by stampVersion
+    version := (version in ThisBuild).value)
 
   lazy val rootSettings = Release.settings ++
     UnidocRoot.akkaSettings ++
     Formatting.formatSettings ++
     Protobuf.settings ++ Seq(
-      parallelExecution in GlobalScope := System.getProperty("akka.parallelExecution", parallelExecutionByDefault.toString).toBoolean)
+      parallelExecution in GlobalScope := System.getProperty("akka.parallelExecution", parallelExecutionByDefault.toString).toBoolean,
+      version in ThisBuild := "2.5-SNAPSHOT"
+    )
 
   lazy val mayChangeSettings = Seq(
     description := """|This module of Akka is marked as
@@ -80,20 +83,65 @@ object AkkaBuild {
 
   private def allWarnings: Boolean = System.getProperty("akka.allwarnings", "false").toBoolean
 
+  final val DefaultScalacOptions = Seq("-encoding", "UTF-8", "-feature", "-unchecked", "-Xlog-reflective-calls", "-Xlint", "-Ywarn-unused")
+
+  // -XDignore.symbol.file suppresses sun.misc.Unsafe warnings
+  final val DefaultJavacOptions = Seq("-encoding", "UTF-8", "-Xlint:unchecked", "-XDignore.symbol.file")
+
   lazy val defaultSettings = resolverSettings ++
     TestExtras.Filter.settings ++
     Protobuf.settings ++ Seq[Setting[_]](
       // compile options
-      scalacOptions in Compile ++= Seq("-encoding", "UTF-8", "-target:jvm-1.8", "-feature", "-unchecked", "-Xlog-reflective-calls", "-Xlint"),
+      scalacOptions in Compile ++= DefaultScalacOptions,
+      // On 2.13, adding -Ywarn-unused breaks 'sbt ++2.13.0-M5 akka-actor/doc'
+      // https://github.com/akka/akka/issues/26119
+      scalacOptions in Compile --= (CrossVersion.partialVersion(scalaVersion.value) match {
+        case Some((2, 13)) => Seq("-Ywarn-unused")
+        case _             => Seq.empty
+      }),
+      // Makes sure that, even when compiling with a jdk version greater than 8, the resulting jar will not refer to
+      // methods not found in jdk8. To test whether this has the desired effect, compile akka-remote and check the
+      // invocation of 'ByteBuffer.clear()' in EnvelopeBuffer.class with 'javap -c': it should refer to
+      // "java/nio/ByteBuffer.clear:()Ljava/nio/Buffer" and not "java/nio/ByteBuffer.clear:()Ljava/nio/ByteBuffer":
+      scalacOptions in Compile ++= (
+        if (System.getProperty("java.version").startsWith("1."))
+          Seq("-target:jvm-1.8")
+        else
+          if (scalaBinaryVersion.value == "2.11")
+            Seq("-target:jvm-1.8", "-javabootclasspath", CrossJava.Keys.fullJavaHomes.value("8") + "/jre/lib/rt.jar")
+          else
+            // -release 8 is not enough, for some reason we need the 8 rt.jar explicitly #25330
+            Seq("-release", "8", "-javabootclasspath", CrossJava.Keys.fullJavaHomes.value("8") + "/jre/lib/rt.jar")),
       scalacOptions in Compile ++= (if (allWarnings) Seq("-deprecation") else Nil),
       scalacOptions in Test := (scalacOptions in Test).value.filterNot(opt ⇒
-        opt == "-Xlog-reflective-calls" || opt.contains("genjavadoc")),
-      // -XDignore.symbol.file suppresses sun.misc.Unsafe warnings
-      javacOptions in compile ++= Seq("-encoding", "UTF-8", "-source", "1.8", "-target", "1.8", "-Xlint:unchecked", "-XDignore.symbol.file"),
+        opt == "-Xlog-reflective-calls" || opt.contains("genjavadoc")) ++ Seq(
+        "-Ywarn-unused"),
+      javacOptions in compile ++= DefaultJavacOptions ++ (
+        if (System.getProperty("java.version").startsWith("1."))
+          Seq()
+        else
+          Seq("-source", "8", "-target", "8", "-bootclasspath", CrossJava.Keys.fullJavaHomes.value("8") + "/jre/lib/rt.jar")
+      ),
+      javacOptions in test ++= DefaultJavacOptions ++ (
+        if (System.getProperty("java.version").startsWith("1."))
+          Seq()
+        else
+          Seq("-source", "8", "-target", "8", "-bootclasspath", CrossJava.Keys.fullJavaHomes.value("8") + "/jre/lib/rt.jar")
+      ),
       javacOptions in compile ++= (if (allWarnings) Seq("-Xlint:deprecation") else Nil),
       javacOptions in doc ++= Seq(),
 
       crossVersion := CrossVersion.binary,
+
+      // Adds a `src/main/scala-2.13+` source directory for Scala 2.13 and newer
+      // and a `src/main/scala-2.13-` source directory for Scala version older than 2.13
+      unmanagedSourceDirectories in Compile += {
+        val sourceDir = (sourceDirectory in Compile).value
+        CrossVersion.partialVersion(scalaVersion.value) match {
+          case Some((2, n)) if n >= 13 => sourceDir / "scala-2.13+"
+          case _                       => sourceDir / "scala-2.13-"
+        }
+      },
 
       ivyLoggingLevel in ThisBuild := UpdateLogging.Quiet,
 
@@ -184,7 +232,8 @@ object AkkaBuild {
       // show full stack traces and test case durations
       testOptions in Test += Tests.Argument("-oDF")) ++
       mavenLocalResolverSettings ++
-      docLintingSettings
+      docLintingSettings ++
+      CrossJava.crossJavaSettings
 
   lazy val docLintingSettings = Seq(
     javacOptions in compile ++= Seq("-Xdoclint:none"),

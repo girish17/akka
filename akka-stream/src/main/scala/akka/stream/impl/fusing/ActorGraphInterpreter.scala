@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2015-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2015-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.stream.impl.fusing
 
 import java.util
@@ -203,6 +204,8 @@ import scala.util.control.NonFatal
         tryCancel(subscription)
       } else if (downstreamCanceled) {
         upstreamCompleted = true
+        tryCancel(subscription)
+      } else if (upstream != null) { // reactive streams spec 2.5
         tryCancel(subscription)
       } else {
         upstream = subscription
@@ -452,7 +455,7 @@ import scala.util.control.NonFatal
 
   /**
    * @param promise Will be completed upon processing the event, or failed if processing the event throws
-   *                if the event isn't ever processed the promise (the stage stops) is failed elsewhere
+   *                if the event isn't ever processed the promise (the operator stops) is failed elsewhere
    */
   final case class AsyncInput(
     shell:   GraphInterpreterShell,

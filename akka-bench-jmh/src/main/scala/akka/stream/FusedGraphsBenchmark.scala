@@ -1,5 +1,5 @@
-/**
- * Copyright (C) 2014-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2014-2019 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.stream
@@ -8,7 +8,6 @@ import java.util.concurrent.{ CountDownLatch, TimeUnit }
 
 import akka.NotUsed
 import akka.actor.ActorSystem
-import akka.stream.impl.fusing.GraphStages
 import akka.stream.scaladsl._
 import akka.stream.stage._
 import org.openjdk.jmh.annotations.{ OperationsPerInvocation, _ }
@@ -318,7 +317,7 @@ class FusedGraphsBenchmark {
 
   @Benchmark
   @OperationsPerInvocation(100 * 1000)
-  def boradcast_zip_balance_merge(blackhole: org.openjdk.jmh.infra.Blackhole): Unit = {
+  def broadcast_zip_balance_merge(blackhole: org.openjdk.jmh.infra.Blackhole): Unit = {
     FusedGraphsBenchmark.blackhole = blackhole
     broadcastZipBalanceMerge.run()(materializer).await()
   }

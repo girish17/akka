@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package docs.testkit
 
 import language.postfixOps
@@ -43,7 +44,7 @@ class TestKitUsageSpec
   val seqRef =
     system.actorOf(Props(classOf[SequencingActor], testActor, headList, tailList))
 
-  override def afterAll {
+  override def afterAll: Unit = {
     shutdown()
   }
 

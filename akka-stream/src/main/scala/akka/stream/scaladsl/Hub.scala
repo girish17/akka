@@ -1,13 +1,14 @@
-/**
- * Copyright (C) 2015-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2015-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.stream.scaladsl
 
 import java.util
 import java.util.concurrent.atomic.{ AtomicLong, AtomicReference }
 
 import akka.NotUsed
-import akka.dispatch.{ AbstractNodeQueue, ExecutionContexts }
+import akka.dispatch.AbstractNodeQueue
 import akka.stream._
 import akka.stream.stage._
 import scala.annotation.tailrec
@@ -44,8 +45,7 @@ object MergeHub {
    * Every new materialization of the [[Source]] results in a new, independent hub, which materializes to its own
    * [[Sink]] for feeding that materialization.
    *
-   * If one of the inputs fails the [[Sink]], the [[Source]] is failed in turn (possibly jumping over already buffered
-   * elements). Completed [[Sink]]s are simply removed. Once the [[Source]] is cancelled, the Hub is considered closed
+   * Completed or failed [[Sink]]s are simply removed. Once the [[Source]] is cancelled, the Hub is considered closed
    * and any new producers using the [[Sink]] will be cancelled.
    *
    * @param perProducerBufferSize Buffer space used per producer. Default value is 16.
@@ -61,8 +61,7 @@ object MergeHub {
    * Every new materialization of the [[Source]] results in a new, independent hub, which materializes to its own
    * [[Sink]] for feeding that materialization.
    *
-   * If one of the inputs fails the [[Sink]], the [[Source]] is failed in turn (possibly jumping over already buffered
-   * elements). Completed [[Sink]]s are simply removed. Once the [[Source]] is cancelled, the Hub is considered closed
+   * Completed or failed [[Sink]]s are simply removed. Once the [[Source]] is cancelled, the Hub is considered closed
    * and any new producers using the [[Sink]] will be cancelled.
    */
   def source[T]: Source[T, Sink[T, NotUsed]] = source(perProducerBufferSize = 16)
@@ -329,7 +328,7 @@ object BroadcastHub {
    * Creates a [[Sink]] that receives elements from its upstream producer and broadcasts them to a dynamic set
    * of consumers. After the [[Sink]] returned by this method is materialized, it returns a [[Source]] as materialized
    * value. This [[Source]] can be materialized arbitrary many times and each materialization will receive the
-   * broadcast elements form the ofiginal [[Sink]].
+   * broadcast elements from the original [[Sink]].
    *
    * Every new materialization of the [[Sink]] results in a new, independent hub, which materializes to its own
    * [[Source]] for consuming the [[Sink]] of that materialization.
@@ -432,11 +431,12 @@ private[akka] class BroadcastHub[T](bufferSize: Int) extends GraphStageWithMater
             addConsumer(consumer, startFrom)
             // in case the consumer is already stopped we need to undo registration
             implicit val ec = materializer.executionContext
-            consumer.callback.invokeWithFeedback(Initialize(startFrom)).onFailure {
+            consumer.callback.invokeWithFeedback(Initialize(startFrom)).failed.foreach {
               case _: StreamDetachedException ⇒
                 callbackPromise.future.foreach(callback ⇒
                   callback.invoke(UnRegister(consumer.id, startFrom, startFrom))
                 )
+              case _ ⇒ ()
             }
           }
 
@@ -760,7 +760,7 @@ object PartitionHub {
    *   identifier for the given element. The function will never be called when there are no active consumers,
    *   i.e. there is always at least one element in the array of identifiers.
    * @param startAfterNrOfConsumers Elements are buffered until this number of consumers have been connected.
-   *   This is only used initially when the stage is starting up, i.e. it is not honored when consumers have
+   *   This is only used initially when the operator is starting up, i.e. it is not honored when consumers have
    *   been removed (canceled).
    * @param bufferSize Total number of elements that can be buffered. If this buffer is full, the producer
    *   is backpressured.
@@ -790,10 +790,10 @@ object PartitionHub {
    * @param partitioner Function that decides where to route an element. The function takes two parameters;
    *   the first is the number of active consumers and the second is the stream element. The function should
    *   return the index of the selected consumer for the given element, i.e. int greater than or equal to 0
-   *   and less than number of consumers. E.g. `(size, elem) => math.abs(elem.hashCode) % size`. It's also
+   *   and less than number of consumers. E.g. `(size, elem) => math.abs(elem.hashCode % size)`. It's also
    *   possible to use `-1` to drop the element.
    * @param startAfterNrOfConsumers Elements are buffered until this number of consumers have been connected.
-   *   This is only used initially when the stage is starting up, i.e. it is not honored when consumers have
+   *   This is only used initially when the operator is starting up, i.e. it is not honored when consumers have
    *   been removed (canceled).
    * @param bufferSize Total number of elements that can be buffered. If this buffer is full, the producer
    *   is backpressured.

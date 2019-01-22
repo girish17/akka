@@ -1,6 +1,7 @@
-/**
- * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+/*
+ * Copyright (C) 2009-2019 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.cluster
 
 import java.util.UUID
@@ -16,13 +17,15 @@ import akka.testkit._
 import akka.testkit.TestEvent._
 import akka.actor.{ Actor, ActorRef, ActorSystem, Address, Deploy, PoisonPill, Props, RootActorPath }
 import akka.event.Logging.ErrorLevel
+import akka.util.ccompat._
 
 import scala.concurrent.duration._
 import scala.collection.immutable
 import java.util.concurrent.ConcurrentHashMap
 
 import akka.remote.DefaultFailureDetectorRegistry
-import akka.cluster.ClusterEvent.{ CurrentClusterState, MemberEvent, MemberExited, MemberRemoved }
+import akka.cluster.ClusterEvent.{ MemberEvent, MemberRemoved }
+import akka.util.ccompat.imm._
 
 import scala.concurrent.Await
 
@@ -46,8 +49,12 @@ object MultiNodeClusterSpec {
       periodic-tasks-initial-delay        = 300 ms
       publish-stats-interval              = 0 s # always, when it happens
       failure-detector.heartbeat-interval = 500 ms
-
       run-coordinated-shutdown-when-down = off
+
+      sharding {
+        retry-interval = 200ms
+        waiting-for-state-timeout = 200ms
+      }
     }
     akka.loglevel = INFO
     akka.log-dead-letters = off
@@ -75,7 +82,7 @@ object MultiNodeClusterSpec {
 
   class EndActor(testActor: ActorRef, target: Option[Address]) extends Actor {
     import EndActor._
-    def receive = {
+    def receive: Receive = {
       case SendEnd ⇒
         target foreach { t ⇒
           context.actorSelection(RootActorPath(t) / self.path.elements) ! End
@@ -236,14 +243,14 @@ trait MultiNodeClusterSpec extends Suite with STMultiNodeSpec with WatchedByCoro
     def memberInState(member: Address, status: Seq[MemberStatus]): Boolean =
       clusterView.members.exists { m ⇒ (m.address == member) && status.contains(m.status) }
 
-    cluster join joinNode
+    cluster.join(joinNode)
     awaitCond({
       clusterView.refreshCurrentState()
       if (memberInState(joinNode, List(MemberStatus.up)) &&
         memberInState(myself, List(MemberStatus.Joining, MemberStatus.Up)))
         true
       else {
-        cluster join joinNode
+        cluster.join(joinNode)
         false
       }
     }, max, interval)
@@ -268,7 +275,7 @@ trait MultiNodeClusterSpec extends Suite with STMultiNodeSpec with WatchedByCoro
    * be determined from the `RoleName`.
    */
   def assertLeader(nodesInCluster: RoleName*): Unit =
-    if (nodesInCluster.contains(myself)) assertLeaderIn(nodesInCluster.to[immutable.Seq])
+    if (nodesInCluster.contains(myself)) assertLeaderIn(nodesInCluster.to(immutable.Seq))
 
   /**
    * Assert that the cluster has elected the correct leader
@@ -305,7 +312,7 @@ trait MultiNodeClusterSpec extends Suite with STMultiNodeSpec with WatchedByCoro
       if (!canNotBePartOfMemberRing.isEmpty) // don't run this on an empty set
         awaitAssert(canNotBePartOfMemberRing foreach (a ⇒ clusterView.members.map(_.address) should not contain (a)))
       awaitAssert(clusterView.members.size should ===(numberOfMembers))
-      awaitAssert(clusterView.members.map(_.status) should ===(Set(MemberStatus.Up)))
+      awaitAssert(clusterView.members.unsorted.map(_.status) should ===(Set(MemberStatus.Up)))
       // clusterView.leader is updated by LeaderChanged, await that to be updated also
       val expectedLeader = clusterView.members.collectFirst {
         case m if m.dataCenter == cluster.settings.SelfDataCenter ⇒ m.address

@@ -32,7 +32,7 @@ Java
 ```
 @@@
 
-and add the following configuration stanza to your `application.conf`
+and add the following configuration line to your `application.conf`
 :
 
 ```
